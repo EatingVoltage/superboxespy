@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.venv/
+__pycache__/
+*.pyc
+public/pyodide/
+public/py.zip
+python/boxes.old/
+# LEMON MILK may not be redistributed: local only. Without it the headings fall back to system-ui.
+public/fonts/

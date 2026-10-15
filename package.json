@@ -1,0 +1,25 @@
+{
+  "name": "superboxespy",
+  "version": "0.1.0",
+  "private": true,
+  "description": "boxes.py as a local web app: sliders, 2D/3D preview, A3 sheets, LightBurn output in the eatingVoltage layers",
+  "license": "GPL-3.0-or-later",
+  "type": "module",
+  "scripts": {
+    "setup": "node scripts/fetch-pyodide.mjs",
+    "pack": "python scripts/pack_python.py",
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": ".venv\\Scripts\\python.exe -m unittest discover -s tests"
+  },
+  "dependencies": {
+    "jszip": "3.10.2",
+    "pyodide": "314.0.7",
+    "three": "0.186.1"
+  },
+  "devDependencies": {
+    "@types/three": "0.186.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.4"
+  }
+}

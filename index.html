@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>superboxes</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='4' y='9' width='24' height='18' rx='2' fill='%23f2b33d'/%3E%3Cpath d='M4 13h24M10 9v4M16 9v4M22 9v4' stroke='%2314161a' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">superboxes<span>.py</span></div>
+    <button id="gen" class="gen-btn" type="button" aria-haspopup="dialog" aria-label="Box type"></button>
+    <input id="name" class="name" type="text" spellcheck="false" aria-label="Box name" placeholder="box name">
+    <div class="spacer"></div>
+    <div class="btn-group">
+      <button id="btn-new" title="Start over with this box type's defaults">New</button>
+      <button id="btn-open" title="Open a .box.json">Open</button>
+      <button id="btn-recent" title="Recently saved boxes">Recent ▾</button>
+      <button id="btn-save" class="primary-soft" title="Save the box (Ctrl+S)">Save</button>
+      <button id="btn-share" title="Copy a link with the whole box in it">Share link</button>
+    </div>
+    <button id="btn-folder" class="folder" title="Pick the folder boxes and LightBurn files are written to">No folder</button>
+    <div class="btn-group">
+      <button id="btn-lbrn" class="primary" title="Write one .lbrn2 per sheet">LightBurn</button>
+      <button id="btn-svg" title="Write one .svg per sheet">SVG</button>
+    </div>
+  </header>
+
+  <main>
+    <aside id="side" class="side">
+      <section class="group material" id="material"></section>
+      <div id="params"></div>
+      <section class="group" id="output"></section>
+    </aside>
+
+    <section class="stage">
+      <nav class="tabs" role="tablist">
+        <button role="tab" data-tab="box" aria-selected="true">Sheets &amp; 3D</button>
+        <button role="tab" data-tab="calib" aria-selected="false">Calibration</button>
+        <div class="spacer"></div>
+        <div class="tab-tools" data-for="box">
+          <button id="btn-repack" title="Forget hand-placed parts and pack again">Re-pack</button>
+          <button id="btn-zoom-out" title="Zoom out (Ctrl+wheel)">−</button>
+          <button id="btn-zoom-in" title="Zoom in (Ctrl+wheel)">+</button>
+        </div>
+      </nav>
+      <div class="panes">
+        <div class="pane" data-pane="box">
+          <div id="split" class="split">
+            <div class="half half-sheets" title="Double-click empty space to fill the view with the sheets">
+              <div id="sheets" class="sheets"></div>
+              <div id="inspector" class="inspector" hidden></div>
+            </div>
+            <div id="divider" class="divider" role="separator" aria-orientation="vertical" aria-label="Sheets | 3D"
+                 tabindex="0" title="Drag to share the space · arrow keys move it · double-click a view to fill the space with it"></div>
+            <div class="half half-3d">
+              <div id="view3d" class="view3d" title="Double-click to fill the view with the 3D"></div>
+              <div id="view3d-controls" class="view3d-controls"></div>
+            </div>
+          </div>
+        </div>
+        <div class="pane" data-pane="calib" hidden>
+          <div id="calib" class="calib"></div>
+        </div>
+      </div>
+      <footer class="statusbar">
+        <span id="status" class="status">Starting…</span>
+        <span id="messages" class="messages"></span>
+        <span class="legal">© 2026 eatingVoltage · boxes.py © Florian Festi and contributors ·
+          free software under the <a href="https://www.gnu.org/licenses/gpl-3.0.html" target="_blank" rel="noopener">GPL-3.0-or-later</a>,
+          no warranty · <a href="https://github.com/EatingVoltage/superboxespy" target="_blank" rel="noopener">source</a></span>
+      </footer>
+    </section>
+  </main>
+
+  <div id="menu" class="menu" hidden></div>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
