@@ -105,6 +105,9 @@ Steps 1-5 and the conversion (7) done 2026-11-07, with logos through `serve.py`.
   Answered 2026-11-07, second pass, all in Python: the free-space grids by scanline instead of contains_xy (the same
   points exactly), the boards' paths straight to JSON; 16 stamps 0.25-0.27 s in Pyodide, 9 stamps 0.19 s. Re-pack of
   16: bounding boxes answer most clearance asks, no unions just for a size; 2.8 s -> 1.7 s, the same layouts.
+  2026-11-08: the same smoke test read 0.47 / 0.56 s and Re-pack 3.2 s, for the 2026-11-07 code (b70ac90, built in a
+  worktree) and the current code alike, while native Python ran as fast as the day before: the PC, not the code.
+  Still open: the 300 ms measured in Chrome itself.
 - How "Auto-Launch Files in Running Copy" behaves when LightBurn is open (untested in both apps).
 
 ## Out of scope

@@ -238,8 +238,9 @@ Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
 2. Retire stampcaser once a case has been cut from here.
 3. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
-A stamp-case build after an edit meets its 300 ms: 0.19 s for 9 stamps, 0.25-0.27 s for 16; Re-pack of 16 takes
-1.7 s (Pyodide under Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).
+A stamp-case build after an edit met its 300 ms: 0.19 s for 9 stamps, 0.25-0.27 s for 16; Re-pack of 16 took 1.7 s
+(Pyodide under Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07). On 2026-11-08 the same PC read about twice that
+for the old and the new code alike (native Python unchanged), so check it in Chrome on a quiet PC before relying on it.
 
 ## For development
 
