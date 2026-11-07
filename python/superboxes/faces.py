@@ -82,7 +82,7 @@ def find(parts, asm, t):
         face.off = np.array([-x0, -y0])
         face.outline = affinity.translate(outline, -x0, -y0)
         face.w, face.h = x1 - x0, y1 - y0
-        face.free = face.outline.buffer(-(t + KEEP_OUT), join_style="mitre")
+        face.free = face.outline.buffer(-(t + KEEP_OUT))            # as the maker's mark keeps clear (export.mark_spot)
         out[role] = face
     return out
 
