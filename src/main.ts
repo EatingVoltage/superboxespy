@@ -26,6 +26,7 @@ const S = {
   thicknessOverride: null as number | null,
   kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
+  home: null as string | null,   // the box's own .box.json on disk (serve.py): Save and the exports go beside it
   options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true } as Options,
   notes: "",
   build: null as Build | null,
@@ -496,8 +497,9 @@ function config(): BoxConfig {
   };
 }
 
-async function load(c: BoxConfig, useProfile = false) {
+async function load(c: BoxConfig, useProfile = false, home: string | null = null) {
   const groups = await schema(c.generator);
+  S.home = home;
   S.generator = c.generator;
   S.name = c.name || c.generator.toLowerCase();
   S.params = isStamp() ? sc.normalise(c.params) as unknown as Record<string, any> : { ...defaults(groups), ...c.params };
@@ -533,6 +535,7 @@ async function load(c: BoxConfig, useProfile = false) {
   resetHistory();
   setGenLabel();
   ($("name") as HTMLInputElement).value = S.name;
+  showHome();
   renderMaterial();
   renderParamPanel();
   renderOutput();
@@ -554,13 +557,50 @@ async function newBox(gen: string, name?: string, params: Record<string, any> = 
 async function saveBox() {
   const c = config();
   const name = files.safeName(S.name);
+  if (S.home) {                    // beside its own file, wherever that is
+    const r = await files.writeBeside(S.home, [{ name: `${name}.box.json`, content: cfg.toJSON(c) }]);
+    if (!r.ok) {
+      toast(`Couldn't save beside ${S.home}: ${r.error}`, true, 9000);
+      return;
+    }
+    S.home = files.homeFor(S.home, name);
+    showHome();
+    cfg.remember(c, S.home);
+    S.dirty = false;
+    toast(`Saved ${S.home}.`);
+    return;
+  }
   const where = await files.save(name, `${name}.box.json`, [{ name: `${name}.box.json`, content: cfg.toJSON(c) }]);
   cfg.remember(c);
   S.dirty = false;
   toast(`${where}.`);
 }
 
+/** Save as...: Windows' Save As dialog (serve.py); the box then lives there, its exports beside it. */
+async function saveAs() {
+  if (!(await files.canUseHome())) {
+    await saveBox();
+    return;
+  }
+  const start = S.home ? files.dirOf(S.home) : files.folderPath();
+  const r = await files.askSaveAs(`${files.safeName(S.name)}.box.json`, start);
+  if (!r.ok) {
+    if (!r.cancelled) toast(`Not saved: ${r.error}`, true, 9000);
+    return;
+  }
+  S.home = r.path;
+  S.name = files.boxNameOf(r.path);
+  ($("name") as HTMLInputElement).value = S.name;
+  await saveBox();
+}
+
 async function openBox() {
+  if (await files.canUseHome()) {
+    const r = await files.askOpen(S.home ? files.dirOf(S.home) : files.folderPath());
+    if (r.ok) await openHome(r.path, r.text);
+    else if (!r.cancelled) toast(`Couldn't open it: ${r.error}`, true, 9000);
+    return;
+  }
   const f = await files.openFile(".json,application/json");
   if (!f) return;
   try {
@@ -570,6 +610,42 @@ async function openBox() {
   } catch (e) {
     toast(`Couldn't open ${f.name}: ${(e as Error).message}`, true);
   }
+}
+
+/** Open the .box.json at `path` (read through serve.py unless `text` is given): it keeps its files beside it. */
+async function openHome(path: string, text?: string): Promise<boolean> {
+  if (text == null) {
+    const r = await files.readHome(path);
+    if (!r.ok) {
+      toast(`Couldn't open ${path}: ${r.error}`, true, 9000);
+      return false;
+    }
+    text = r.text;
+  }
+  try {
+    await load(cfg.parse(text), false, path);
+  } catch (e) {
+    toast(`Couldn't open ${path}: ${(e as Error).message}`, true, 9000);
+    return false;
+  }
+  cfg.remember(config(), path);
+  toast(`Opened ${path}.\nSave and the exports go beside it.`);
+  return true;
+}
+
+/** The chip beside the box name: the folder the box lives in, when it has a file of its own. */
+function showHome() {
+  const el = $("home");
+  el.hidden = !S.home;
+  const save = $("btn-save");
+  if (!S.home) {
+    save.title = "Save the box (Ctrl+S)";
+    return;
+  }
+  const dir = files.dirOf(S.home);
+  el.textContent = files.fileOf(dir) || dir;
+  el.title = `${S.home}\nSave and the exports go into this folder.`;
+  save.title = `Save to ${S.home} (Ctrl+S)`;
 }
 
 async function share() {
@@ -592,7 +668,7 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
     toast("Some parts break the sheet rules (shown red). Move them or Re-pack first.", true);
     return;
   }
-  if (open && !files.folderName()) {
+  if (open && !S.home && !files.folderName()) {
     if (!files.canPickFolder()) {
       toast("Open in LightBurn writes the project into a folder, and this browser can't write into folders.\n" +
         "Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api), or Export as LightBurn.", true, 9000);
@@ -604,18 +680,22 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
   S.busy++;
   setStatus("Writing files…");
   const name = files.safeName(S.name);
+  // beside the box's own file, else <picked folder>/<box name>/, else downloads
+  const place = S.home ? files.besideHome(S.home) : files.folderName() ? files.inFolder(name) : null;
   // carry over layer settings the user changed in LightBurn (eVlaser rule: a rebuild never wipes them)
   let previous: string | null = null;
   let stale: string[] = [];
-  if (kind === "lbrn2" && files.folderName()) {
-    const here = await files.listFolder(name);
-    previous = await files.lightburnSaved(name, [`${name}.lbrn2`, `${name}_backup.lbrn2`]);
+  if (kind === "lbrn2" && place) {
+    const here = await place.list();
+    previous = await place.saved([`${name}.lbrn2`, `${name}_backup.lbrn2`]);
     // before pages there was one NN_<name>.lbrn2 per sheet: their saved layers count until the project exists
     const literal = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const re = new RegExp(`^\\d\\d_${literal}(_backup)?\\.lbrn2$`);
     const old = here.filter((n) => re.test(n));
-    if (!previous && !here.includes(`${name}.lbrn2`)) previous = await files.lightburnSaved(name, old);
-    stale = old.filter((n) => !n.includes("_backup."));
+    if (!previous && !here.includes(`${name}.lbrn2`)) previous = await place.saved(old);
+    // stampcaser wrote one "<name> N <board>.lbrn2" per board
+    const boards = new RegExp(`^${literal} \\d [^.]+\\.lbrn2$`);
+    stale = [...old.filter((n) => !n.includes("_backup.")), ...here.filter((n) => boards.test(n))];
   }
   const r = await py.call<ExportResult>("export", { ...request(S.placements), previous });
   S.busy--;
@@ -626,24 +706,29 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
   }
   const out = r.files.filter((f) => f.kind === kind)
     .map((f) => ({ ...f, name: f.kind === "lbrn2" ? `${name}.lbrn2` : f.name.replace(/^(\d\d)_[^.]*/, `$1_${name}`) }));
-  const withBox = files.folderName() ? [...out, { name: `${name}.box.json`, content: cfg.toJSON(config()) }] : out;
+  const withBox = place ? [...out, { name: `${name}.box.json`, content: cfg.toJSON(config()) }] : out;
   let where: string;
-  if (open) {
-    const dir = await files.writeToFolder(name, withBox);
+  if (place) {
+    const dir = await place.write(withBox);
     if (!dir) {
-      toast("Couldn't write into the folder: the browser has no permission. Click the folder button and pick it again.", true, 9000);
+      toast(S.home ? `Couldn't write beside ${S.home}.` :
+        "Couldn't write into the folder: the browser has no permission. Click the folder button and pick it again.", true, 9000);
       return;
     }
     where = `Saved ${withBox.map((f) => f.name).join(", ")} to ${dir}`;
+    if (S.home) {
+      S.home = files.homeFor(S.home, name);
+      showHome();
+    }
+    cfg.remember(config(), S.home);
   } else {
     where = await files.save(name, `${name}_${kind}.zip`, withBox);
   }
-  if (withBox.length > out.length) cfg.remember(config());
   let opened = "";
   let failed = false;
   if (open) {
     setStatus("Opening LightBurn…");
-    const o = await files.openInLightBurn(name, out[0].name, out[0].content);
+    const o = await place!.open(out[0].name, out[0].content);
     setStatus("Ready");
     opened = o.ok ? `\nOpened ${o.path} in LightBurn.` : o.cancelled ? "\nNot opened in LightBurn." : `\nNot opened: ${o.error}`;
     failed = !o.ok && !o.cancelled;
@@ -655,7 +740,7 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
     (kind === "lbrn2" && n > 1 ? `\n${n} sheets, one page each in LightBurn.` : "") +
     (times ? `\nEstimated ${times}.` : "") +
     (r.kept && kind === "lbrn2" ? "\nKept your LightBurn layer settings." : "") +
-    (stale.length ? `\nThe old per-sheet files ${stale.join(", ")} are still in the folder: delete them so they don't get cut.` : "") +
+    (stale.length ? `\nThe old files ${stale.join(", ")} are still in the folder: delete them so they don't get cut.` : "") +
     (kind === "lbrn2" ? "\nIf LightBurn already had it open: reopen it, or you'll cut the old geometry." : ""), failed, 10000);
 }
 
@@ -855,12 +940,18 @@ function wire() {
     S.generator === FIRST_BOX.generator ? FIRST_BOX.params : {});
   $("btn-open").onclick = openBox;
   $("btn-save").onclick = saveBox;
+  $("btn-save-as").onclick = saveAs;
+  files.canUseHome().then((ok) => ($("btn-save-as").hidden = !ok));
   $("btn-share").onclick = share;
   $("btn-recent").onclick = (e) => {
     e.stopPropagation();
     menu($("btn-recent"), cfg.recent().map((r) => ({
       label: `${r.name} · ${r.generator} · ${r.saved ? new Date(r.saved).toLocaleDateString() : ""}`,
-      run: () => load(r.config),
+      run: async () => {
+        // a box with a file of its own is read from there: it may have changed since
+        if (r.home && (await files.canUseHome()) && (await openHome(r.home))) return;
+        await load(r.config);
+      },
     })), "No saved boxes yet");
   };
   $("btn-folder").onclick = async () => {
@@ -886,7 +977,7 @@ function wire() {
     const k = e.key.toLowerCase();
     if (ctrl && k === "s") {
       e.preventDefault();
-      saveBox();
+      (e.shiftKey ? saveAs : saveBox)();
       return;
     }
     const typing = (e.target as HTMLElement).closest("input, textarea, select");
@@ -909,6 +1000,13 @@ function wire() {
 }
 
 async function openFromHash(): Promise<boolean> {
+  const m = location.hash.match(/^#open=(.+)$/);
+  if (m) {                         // serve.py handed over a .box.json: double-click, or the Start menu entry
+    history.replaceState(null, "", location.pathname + location.search);
+    const path = decodeURIComponent(m[1]);
+    if (S.dirty && !confirm(`Open ${path}? Unsaved changes to this box are lost.`)) return false;
+    return openHome(path);
+  }
   const c = await cfg.fromHash();
   if (!c) return false;
   if (S.dirty && !confirm(`Open "${c.name}" from the link? Unsaved changes to this box are lost.`)) return false;

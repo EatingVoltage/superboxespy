@@ -59,6 +59,11 @@ and the stamp case in 3D. Not wanted yet: stamp-case boards and box parts on the
   still moves it.
 - LightBurn: superboxes' explicit **Open in LightBurn** replaces stampcaser's open-when-idle build.
 - Gallery tile: a default case of a handful of stamps; at rest exploded, on hover the boards stack and the lid lifts.
+- A box's home (step 5, 2026-11-07): Open... and Save as... are Windows' own dialogs, shown by `serve.py` over the app
+  window (IFileDialog: it starts in the box's folder and keeps a last folder of its own; the older GetOpenFileName
+  started in whatever folder another Python program used last). Save, the exports and Open in LightBurn write beside
+  the `.box.json`; files are named after the box name, so renaming saves a new `<name>.box.json` beside the old one.
+  New boxes and share links have no home and use the picked folder. A chip next to the name shows the box's folder.
 - Rest pieces for any layout (step 4, 2026-11-07): stampcaser's rule made general. The full-width piece above the
   highest part, then bands from the bottom, each ending at a part's top edge, with a piece right of the parts in it.
   Bands whose right ends are within 0.5 mm make one piece; a band under 10 mm joins the neighbour that wastes less.
@@ -67,7 +72,7 @@ and the stamp case in 3D. Not wanted yet: stamp-case boards and box parts on the
   the rule in TypeScript, from the parts' boxes, to follow a drag; a test checks it against Python on every type.
 
 ## Build order
-Steps 1-4 and the conversion (7) done 2026-11-07, with app-wide undo from step 5 and logos through `serve.py`.
+Steps 1-4 and the conversion (7) done 2026-11-07, step 5 but the double-click too, and logos through `serve.py`.
 1. Python core: stampcaser's model, shapes, layout, pack, magnets, labels into `python/superboxes/stampcase/`; the two
    evlaser copies merged (typeset, textures, svgpath come over); fonttools in Pyodide; the converter; the parity test.
 2. The type end to end: catalog entry, api, sheets, LightBurn export, 3D assembly (explode, lid lift, magnets, stamps).
@@ -78,6 +83,9 @@ Steps 1-4 and the conversion (7) done 2026-11-07, with app-wide undo from step 5
 7. Convert the three `.stampcase` files, parity, retire stampcaser.
 
 ## Surfaced assumptions
+- Double-click: Windows picks a file's program by its last extension only, so `x.box.json` is a `.json` file to it;
+  a double-click can't reach superboxes without superboxes handling `.json` files (found 2026-11-07, step 5). On this
+  PC `.json` has no default program today (Windows asks; VS Code, Notepad, Firefox, KiCad were picked before).
 - stampcaser picked a desktop app because "a browser app can't start programs"; superboxes' `serve.py` since does.
 - stampcaser's `LICENSE` said all rights reserved and its repo is private; merging changes that for the code.
 - Text on a box wall only reads right if the decorated face lies up on the sheet; parts get flipped for it, using the

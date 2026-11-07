@@ -46,7 +46,8 @@ export async function fromHash(): Promise<BoxConfig | null> {
   }
 }
 
-export interface RecentEntry { name: string; generator: string; saved: string; config: BoxConfig }
+/** A recently saved or opened box; home: its .box.json on disk, when serve.py knows it (read again from there). */
+export interface RecentEntry { name: string; generator: string; saved: string; config: BoxConfig; home?: string | null }
 
 export function recent(): RecentEntry[] {
   try {
@@ -56,10 +57,10 @@ export function recent(): RecentEntry[] {
   }
 }
 
-export function remember(c: BoxConfig) {
+export function remember(c: BoxConfig, home: string | null = null) {
   try {
-    const list = recent().filter((r) => r.name !== c.name);
-    list.unshift({ name: c.name, generator: c.generator, saved: c.saved, config: c });
+    const list = recent().filter((r) => (r.home ?? r.name) !== (home ?? c.name));
+    list.unshift({ name: c.name, generator: c.generator, saved: c.saved, config: c, home });
     localStorage.setItem(RECENT, JSON.stringify(list.slice(0, 12)));
   } catch {
     /* convenience only */

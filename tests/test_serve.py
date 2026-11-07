@@ -1,4 +1,5 @@
-"""serve.py's Open in LightBurn endpoint. LightBurn itself is never started: the launch is replaced by a recorder.
+"""serve.py: Open in LightBurn, a box beside its own file, the file dialogs. LightBurn itself is never started (the
+launch is replaced by a recorder), and the one real file dialog opens on a desktop that is never shown.
 Run: .venv/Scripts/python -m unittest discover -s tests -v"""
 import functools
 import hashlib
@@ -68,6 +69,162 @@ class OpenInLightBurn(unittest.TestCase):
             serve.folders_named = real
         self.assertTrue(r["ok"], r)
         self.assertEqual(self.launched, [self.file])
+
+    def test_opens_a_project_beside_its_box_by_full_path(self):
+        r = serve.open_in_lightburn({"file": self.file, "sha256": SHA}, launch=self.launched.append)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(self.launched, [self.file])
+        r = serve.open_in_lightburn({"file": self.file, "sha256": "0" * 64}, launch=self.launched.append)
+        self.assertFalse(r["ok"])                       # not the file the page just wrote
+        for bad in ("abox.lbrn2", self.file[:-6] + ".exe"):
+            with self.assertRaises(ValueError):
+                serve.open_in_lightburn({"file": bad, "sha256": SHA}, launch=self.launched.append)
+        self.assertEqual(self.launched, [self.file])
+
+
+class BoxBesideItsFile(unittest.TestCase):
+    """POST /api/box: a box opened or saved anywhere reads and writes beside its own .box.json, nowhere else."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = os.path.join(self.tmp.name, "hw", "packaging")
+        os.makedirs(self.dir)
+        self.home = os.path.join(self.dir, "CASE.box.json")
+        with open(self.home, "w", encoding="utf-8") as f:
+            f.write('{"name": "CASE"}')
+        self.asked = []
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def op(self, answer=None, **req):
+        def ask(kind, name, start):
+            self.asked.append((kind, name, start))
+            return answer
+        return serve.box_op(req, ask=ask)
+
+    def test_reads_a_box(self):
+        r = self.op(op="read", path=self.home)
+        self.assertEqual((r["path"], r["text"]), (self.home, '{"name": "CASE"}'))
+        for bad in ("CASE.box.json", os.path.join(self.dir, "notes.txt"),
+                    os.path.join(self.tmp.name, "no", "x.box.json")):
+            with self.subTest(path=bad), self.assertRaises(ValueError):
+                self.op(op="read", path=bad)
+
+    def test_writes_beside_the_box_only(self):
+        files = [{"name": "CASE.lbrn2", "content": "<x/>\n"}, {"name": "01_CASE.svg", "content": "<svg/>"},
+                 {"name": "CASE.box.json", "content": "{}"}]
+        r = self.op(op="write", home=self.home, files=files)
+        self.assertEqual(r["dir"], self.dir)
+        with open(os.path.join(self.dir, "CASE.lbrn2"), "rb") as f:
+            self.assertEqual(f.read(), b"<x/>\n")              # as the page wrote it: no CRLF
+        self.assertEqual(sorted(self.op(op="list", home=self.home)["names"]),
+                         ["01_CASE.svg", "CASE.box.json", "CASE.lbrn2"])
+        self.assertEqual(self.op(op="read_beside", home=self.home, name="CASE.lbrn2")["text"], "<x/>\n")
+        self.assertIsNone(self.op(op="read_beside", home=self.home, name="other.lbrn2")["text"])
+        for name in ("..\\evil.lbrn2", "../evil.svg", "C:evil.svg", "evil.exe", "evil.bat", "", None):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.op(op="write", home=self.home, files=[{"name": name, "content": "x"}])
+        with self.assertRaises(ValueError):
+            self.op(op="read_beside", home=self.home, name="CASE.box.json")    # only LightBurn's own files
+        with self.assertRaises(ValueError):
+            self.op(op="write", home=os.path.join(self.dir, "x.txt"), files=files)
+        # a bad name anywhere in the list: nothing is written
+        with self.assertRaises(ValueError):
+            self.op(op="write", home=self.home,
+                    files=[{"name": "NEW.svg", "content": "x"}, {"name": "x.exe", "content": "x"}])
+        self.assertFalse(os.path.exists(os.path.join(self.dir, "NEW.svg")))
+
+    def test_dialogs(self):
+        r = self.op(answer=self.home, op="ask_open", start=self.dir)
+        self.assertEqual((r["path"], r["text"]), (self.home, '{"name": "CASE"}'))
+        self.assertEqual(self.asked[-1], ("open", None, self.dir))
+        self.assertEqual(self.op(answer=None, op="ask_open")["cancelled"], True)
+        for typed, got in (("NEW", "NEW.box.json"), ("NEW.json", "NEW.box.json"), ("NEW.box.json", "NEW.box.json")):
+            r = self.op(answer=os.path.join(self.dir, typed), op="ask_save", name="CASE.box.json", start=self.dir)
+            self.assertEqual(r["path"], os.path.join(self.dir, got))
+        self.assertEqual(self.asked[-1], ("save", "CASE.box.json", self.dir))
+        self.op(answer=None, op="ask_save", name="../x.box.json", start=os.path.join(self.dir, "gone"))
+        self.assertEqual(self.asked[-1], ("save", None, None))  # no paths in the name, no folder that isn't there
+
+    def test_the_launcher_hands_a_file_to_the_page(self):
+        self.assertEqual(serve.open_hash(None), "")
+        h = serve.open_hash(self.home)
+        self.assertTrue(h.startswith("#open="))
+        import urllib.parse
+        self.assertEqual(urllib.parse.unquote(h[6:]), self.home)
+
+
+@unittest.skipUnless(os.name == "nt", "Windows only")
+class FileDialog(unittest.TestCase):
+    """The real Open / Save As dialog, on a desktop of its own that is never shown: it starts in the box's folder and
+    gives back the path picked, or None on Cancel."""
+
+    def run_dialog(self, kind, name, start, press):
+        import ctypes
+        import time
+        from ctypes import wintypes as W
+        u = ctypes.windll.user32
+        u.CreateDesktopW.restype = W.HANDLE
+        u.CreateDesktopW.argtypes = [W.LPCWSTR, W.LPCWSTR, ctypes.c_void_p, W.DWORD, W.DWORD, ctypes.c_void_p]
+        u.SetThreadDesktop.argtypes = [W.HANDLE]
+        u.CloseDesktop.argtypes = [W.HANDLE]
+        u.PostMessageW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
+        enum = ctypes.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
+        u.EnumDesktopWindows.argtypes = [W.HANDLE, enum, W.LPARAM]
+        desk = u.CreateDesktopW("superboxes-test-%d" % os.getpid(), None, None, 0, 0x10000000, None)
+        self.assertTrue(desk)
+        got = {}
+
+        def dialog():
+            u.SetThreadDesktop(desk)               # before this thread makes any window
+            try:
+                got["path"] = serve.ask_path(kind, name, start, owner=0)
+            except Exception as e:  # noqa: BLE001
+                got["error"] = e
+
+        def dialogs():
+            found = []
+
+            def each(h, _):
+                cls = ctypes.create_unicode_buffer(64)
+                u.GetClassNameW(h, cls, 64)
+                if cls.value == "#32770" and u.IsWindowVisible(h):
+                    found.append(h)
+                return True
+
+            u.EnumDesktopWindows(desk, enum(each), 0)
+            return found
+
+        t = threading.Thread(target=dialog, daemon=True)
+        t.start()
+        try:
+            deadline = time.monotonic() + 20
+            while t.is_alive() and not dialogs() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            time.sleep(0.5)
+            for h in dialogs():
+                u.PostMessageW(h, 0x0111, press, 0)           # WM_COMMAND IDOK / IDCANCEL
+            t.join(20)
+        finally:
+            for h in dialogs():
+                u.PostMessageW(h, 0x0111, 2, 0)
+            t.join(5)
+            u.CloseDesktop(desk)
+        self.assertNotIn("error", got)
+        return got.get("path", "still open")
+
+    def test_save_as_starts_in_the_boxs_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(self.run_dialog("save", "CASE.box.json", d, 1), os.path.join(d, "CASE.box.json"))
+
+    def test_open_starts_in_the_boxs_folder_and_cancels(self):
+        with tempfile.TemporaryDirectory() as d:
+            box = os.path.join(d, "CASE.box.json")
+            with open(box, "w") as f:
+                f.write("{}")
+            self.assertEqual(self.run_dialog("open", "CASE.box.json", d, 1), box)
+            self.assertIsNone(self.run_dialog("open", None, d, 2))
 
 
 @unittest.skipUnless(os.name == "nt", "Windows only")
@@ -171,6 +328,15 @@ class Endpoint(unittest.TestCase):
                 self.assertEqual(self.post(headers)[0], 403)
         self.assertEqual(self.post({}, path="/api/other")[0], 404)
         self.assertEqual(len(self.calls), n)
+
+    def test_a_box_endpoint_for_the_app_only(self):
+        status, body = self.post({"Origin": "http://localhost:%d" % self.port}, path=serve.BOX,
+                                 body=json.dumps({"op": "hello"}))
+        self.assertEqual((status, json.loads(body)), (200, {"ok": True}))
+        self.assertEqual(self.post({"Sec-Fetch-Site": "cross-site"}, path=serve.BOX,
+                                   body=json.dumps({"op": "hello"}))[0], 403)
+        big = json.dumps({"op": "hello", "pad": "x" * 200000})     # a box's files are bigger than 64 kB
+        self.assertEqual(json.loads(self.post({}, path=serve.BOX, body=big)[1]), {"ok": True})
 
     def test_a_too_big_request_gets_an_answer(self):
         n = len(self.calls)

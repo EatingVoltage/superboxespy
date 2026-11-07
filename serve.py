@@ -1,12 +1,14 @@
 """Serve the built app (dist/) on localhost and open it.
 
-    python serve.py [--port 5198] [--browser chrome|edge|default|none]
+    python serve.py [--port 5198] [--browser chrome|edge|default|none] [file.box.json]
 
 Standard library only. Binds to 127.0.0.1, so nothing is reachable from the network. Chrome or Edge open it as an
 app window: both can write straight into a folder (File System Access); Brave needs
 brave://flags/#file-system-access-api for that.
 
-POST /api/open-lightburn opens a project the page just wrote into its folder in LightBurn (see open_in_lightburn).
+POST /api/open-lightburn opens a project the page just wrote in LightBurn (see open_in_lightburn). POST /api/box reads
+and writes a box beside its own .box.json, and shows Windows' Open / Save As dialogs for it (see box_op). A file given
+on the command line opens in an app window, on the server already running if there is one.
 """
 import argparse
 import functools
@@ -43,6 +45,7 @@ BROWSERS = {
 
 
 OPEN_LIGHTBURN = "/api/open-lightburn"
+BOX = "/api/box"
 LOGOS = "/api/logos"
 LOGO_DIR = r"C:\Projects\eating voltage Fonts\logos"
 LIGHTBURN_EXE = [r"C:\Program Files\LightBurn\LightBurn.exe", r"C:\Program Files (x86)\LightBurn\LightBurn.exe"]
@@ -101,20 +104,21 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             n = max(0, int(self.headers.get("Content-Length") or 0))
         except ValueError:
             n = 0
-        data = []
+        data, kept = [], 0
         while n > 0:
             chunk = self.rfile.read(min(n, 65536))
             if not chunk:
                 break
             n -= len(chunk)
-            if sum(map(len, data)) <= limit:
+            if kept <= limit:
                 data.append(chunk)
-        body = b"".join(data)
-        return body if len(body) <= limit else None
+                kept += len(chunk)
+        return b"".join(data) if kept <= limit else None
 
     def do_POST(self):
-        body = self.read_body()
-        if self.path != OPEN_LIGHTBURN:
+        # a box's files can be big (a stamp case's hatched lid): 64 MB for those, 64 kB for the rest
+        body = self.read_body(64 << 20 if self.path == BOX else 65536)
+        if self.path not in (OPEN_LIGHTBURN, BOX):
             self.send_error(404)
             return
         if not self.from_the_app():
@@ -123,7 +127,8 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         try:
             if body is None:
                 raise ValueError("request too big")
-            res = open_in_lightburn(json.loads(body))
+            req = json.loads(body)
+            res = box_op(req) if self.path == BOX else open_in_lightburn(req)
         except Exception as e:   # noqa: BLE001 - every failure goes back to the page as text
             res = {"ok": False, "error": str(e)}
         body = json.dumps(res).encode("utf-8")
@@ -340,16 +345,25 @@ def bring_forward(proc, timeout=30.0, poll=0.25):
 
 def open_in_lightburn(req, launch=None):
     """req = {"folder": picked folder's name, "path": [box folder, file.lbrn2], "sha256": hex, "root": optional full
-    path of the picked folder}. {"ok": True, "path", "root"} once LightBurn is started; {"ok": False, "need_root":
-    True} when the folder can't be found, so the page can ask for its path."""
+    path of the picked folder}, or {"file": full path of the .lbrn2 (a box beside its own file), "sha256"}.
+    {"ok": True, "path", "root"} once LightBurn is started; {"ok": False, "need_root": True} when the folder can't be
+    found, so the page can ask for its path."""
     folder, rel, sha, hint = req.get("folder"), req.get("path"), req.get("sha256"), req.get("root")
+    if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
+        raise ValueError("no checksum")
+    if "file" in req:
+        path = req["file"]
+        if not (isinstance(path, str) and os.path.isabs(path) and path.lower().endswith(".lbrn2")):
+            raise ValueError("not a .lbrn2 file")
+        if not (os.path.isfile(path) and file_sha256(path) == sha):
+            return {"ok": False, "error": "%s isn't the project just written" % path}
+        (launch or launch_lightburn)(path)
+        return {"ok": True, "path": path, "root": os.path.dirname(path)}
     if not plain_name(folder):
         raise ValueError("no folder name")
     if not (isinstance(rel, list) and 1 <= len(rel) <= 3 and all(plain_name(p) for p in rel)
             and rel[-1].lower().endswith(".lbrn2")):
         raise ValueError("not a .lbrn2 file in the folder")
-    if not (isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{64}", sha)):
-        raise ValueError("no checksum")
     roots = [hint] if isinstance(hint, str) and os.path.isabs(hint) and os.path.isdir(hint) else []
     for root in roots + [r for r in folders_named(folder) if r not in roots]:
         path = os.path.join(root, *rel)
@@ -362,6 +376,195 @@ def open_in_lightburn(req, launch=None):
     return {"ok": False, "need_root": True,
             "error": "Couldn't find the folder \"%s\" holding %s" % (folder, "/".join(rel))
                      + (" (not in %s)" % hint if hint else "")}
+
+
+# ------------------------------------------------------------------ a box beside its own file
+# A box opened or saved anywhere (Open..., Save as..., a .box.json given to serve.py) keeps its full path: Save and the
+# exports write beside it (.grill/stamp-case-merge.md). A browser never learns full paths, so serve.py reads and writes
+# there, and Open... / Save as... are Windows' own file dialogs, which serve.py shows over the app window.
+BESIDE = (".box.json", ".lbrn2", ".svg")      # what may be written beside a box
+_dialog = threading.Lock()
+
+
+def box_path(p):
+    """p, normalised, when it's the full path of a .box.json in a folder that exists; else ValueError."""
+    if not (isinstance(p, str) and os.path.isabs(p) and p.lower().endswith(".box.json")
+            and os.path.isdir(os.path.dirname(p))):
+        raise ValueError("not a .box.json in a folder: %r" % (p,))
+    return os.path.normpath(p)
+
+
+def beside(home, name, kinds=BESIDE):
+    """Full path of file `name` beside the box `home`: a plain name of one of `kinds`, never anywhere else."""
+    if not (plain_name(name) and name.lower().endswith(kinds)):
+        raise ValueError("not a file a box keeps beside it: %r" % (name,))
+    return os.path.join(os.path.dirname(box_path(home)), name)
+
+
+def write_text(path, content):
+    """Write as given (the page's own line ends), through a temporary file, so a failed write leaves the old one."""
+    tmp = path + ".superboxes-tmp"
+    with open(tmp, "w", encoding="utf-8", newline="") as f:
+        f.write(content)
+    os.replace(tmp, path)
+
+
+def box_op(req, ask=None):
+    """POST /api/box. {"op": "hello"} | {"op": "read", "path"} -> {"path", "text"} |
+    {"op": "ask_open", "start"} -> the same, for the file picked in the Open dialog |
+    {"op": "ask_save", "name", "start"} -> {"path"} picked in the Save As dialog (always a .box.json) |
+    {"op": "list", "home"} -> {"dir", "names"} of the box's folder |
+    {"op": "read_beside", "home", "name"} -> {"text", "mtime"} of a .lbrn2 beside it, text None if there's none |
+    {"op": "write", "home", "files": [{"name", "content"}]} -> {"dir"}.
+    A cancelled dialog answers {"ok": False, "cancelled": True}. ask: the dialog (tests replace it)."""
+    op = req.get("op")
+    if op == "hello":
+        return {"ok": True}
+    if op == "read":
+        path = box_path(req.get("path"))
+        with open(path, encoding="utf-8") as f:
+            return {"ok": True, "path": path, "text": f.read()}
+    if op in ("ask_open", "ask_save"):
+        start = req.get("start")
+        start = start if isinstance(start, str) and os.path.isdir(start) else None
+        name = req.get("name") if op == "ask_save" and plain_name(req.get("name")) else None
+        path = (ask or ask_path)("open" if op == "ask_open" else "save", name, start)
+        if not path:
+            return {"ok": False, "cancelled": True}
+        if op == "ask_open":
+            return box_op({"op": "read", "path": path})
+        if not path.lower().endswith(".box.json"):        # "abox" or "abox.json" typed: still a box
+            path = re.sub(r"(?i)\.json$", "", path) + ".box.json"
+        return {"ok": True, "path": box_path(path)}
+    if op == "list":
+        d = os.path.dirname(box_path(req.get("home")))
+        with os.scandir(d) as it:
+            return {"ok": True, "dir": d, "names": sorted(e.name for e in it if e.is_file())}
+    if op == "read_beside":
+        path = beside(req.get("home"), req.get("name"), (".lbrn2",))
+        try:
+            with open(path, encoding="utf-8") as f:
+                return {"ok": True, "text": f.read(), "mtime": os.path.getmtime(path)}
+        except FileNotFoundError:
+            return {"ok": True, "text": None}
+    if op == "write":
+        files = req.get("files")
+        if not (isinstance(files, list) and files and all(isinstance(f, dict) for f in files)):
+            raise ValueError("nothing to write")
+        todo = [(beside(req.get("home"), f.get("name")), f.get("content")) for f in files]
+        if not all(isinstance(c, str) for _, c in todo):
+            raise ValueError("a file without content")
+        for path, content in todo:
+            write_text(path, content)
+        return {"ok": True, "dir": os.path.dirname(todo[0][0])}
+    raise ValueError("unknown op %r" % (op,))
+
+
+def app_window():
+    """The superboxes app window: the foreground window if it's that, else the first visible one titled so."""
+    if os.name != "nt":
+        return None
+    fg = foreground_window()
+    if fg and window_title(fg).strip().lower() == APP_TITLE:
+        return fg
+    ctypes, user32 = _user32()
+    found = []
+    proto = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def each(hwnd, _):
+        if user32.IsWindowVisible(ctypes.c_void_p(hwnd)) and window_title(hwnd).strip().lower() == APP_TITLE:
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(proto(each), None)
+    return found[0] if found else None
+
+
+# IFileDialog (Windows Vista and later), through its vtable: the older GetOpenFileName ignores the folder it's given and
+# starts in pythonw's last folder, which every Python program shares (seen 2026-11-07). SetFolder starts it in the
+# box's own folder; SetClientGuid gives superboxes a last folder of its own for the rest.
+FOS_OVERWRITEPROMPT, FOS_NOCHANGEDIR, FOS_FORCEFILESYSTEM = 0x2, 0x8, 0x40
+FOS_PATHMUSTEXIST, FOS_FILEMUSTEXIST = 0x800, 0x1000
+CANCELLED = -2147023673         # HRESULT_FROM_WIN32(ERROR_CANCELLED)
+SIGDN_FILESYSPATH = 0x80058000
+DIALOG_GUID = "{6B1E6F5A-2C1D-4B8E-9D3A-5F0C2E7A9B41}"   # superboxes' own last folder in the file dialogs
+
+
+def ask_path(kind, name=None, start=None, owner=None):
+    """Windows' Open ("open") or Save As ("save") dialog for a .box.json, starting in folder `start` with `name` in the
+    file box: the full path picked, or None. It is owned by the app window (or `owner`), so it opens over it and keeps
+    it waiting, like the browser's own dialogs. SUPERBOXES_DIALOG, when set, answers instead without a dialog: a path,
+    or empty for Cancel (headless tests)."""
+    fake = os.environ.get("SUPERBOXES_DIALOG")
+    if fake is not None:
+        return fake or None
+    if os.name != "nt":
+        raise OSError("file dialogs need Windows")
+    if not _dialog.acquire(blocking=False):
+        raise OSError("a file dialog is already open")
+    import ctypes
+    from ctypes import wintypes as W
+
+    def guid(text):
+        g = (ctypes.c_byte * 16)()
+        if ctypes.windll.ole32.CLSIDFromString(ctypes.c_wchar_p(text), ctypes.byref(g)):
+            raise OSError("bad GUID " + text)
+        return g
+
+    def call(obj, index, *args, types=()):
+        """Method `index` of COM object `obj` (its vtable order), returning the HRESULT."""
+        vtable = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+        return ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, *types)(vtable[index])(obj, *args)
+
+    def check(hr, what):
+        if hr:
+            raise OSError("the file dialog failed at %s (0x%08x)" % (what, hr & 0xFFFFFFFF))
+
+    class Spec(ctypes.Structure):
+        _fields_ = [("name", W.LPCWSTR), ("spec", W.LPCWSTR)]
+
+    ole32, shell32 = ctypes.windll.ole32, ctypes.windll.shell32
+    inited = ole32.CoInitializeEx(None, 2) in (0, 1)              # COINIT_APARTMENTTHREADED: S_OK or S_FALSE
+    dialog, item, result = ctypes.c_void_p(), ctypes.c_void_p(), ctypes.c_void_p()
+    try:
+        clsid, iid = (("{DC1C5A9C-E88A-4dde-A5A1-60F82A20AEF7}", "{d57c7288-d4ad-4768-be02-9d969532d960}")
+                      if kind == "open" else
+                      ("{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}", "{84bccd23-5fde-4cdb-aea4-af64b83d78ab}"))
+        check(ole32.CoCreateInstance(guid(clsid), None, 1, guid(iid), ctypes.byref(dialog)), "CoCreateInstance")
+        specs = (Spec * 2)(Spec("Boxes (*.box.json)", "*.box.json"), Spec("All files (*.*)", "*.*"))
+        check(call(dialog, 4, 2, specs, types=(W.UINT, ctypes.c_void_p)), "SetFileTypes")
+        opts = W.DWORD()
+        check(call(dialog, 10, ctypes.byref(opts), types=(ctypes.c_void_p,)), "GetOptions")
+        opts = opts.value | FOS_FORCEFILESYSTEM | FOS_NOCHANGEDIR | FOS_PATHMUSTEXIST | (
+            FOS_FILEMUSTEXIST if kind == "open" else FOS_OVERWRITEPROMPT)
+        check(call(dialog, 9, opts, types=(W.DWORD,)), "SetOptions")
+        check(call(dialog, 24, guid(DIALOG_GUID), types=(ctypes.c_void_p,)), "SetClientGuid")
+        call(dialog, 17, "Open a box" if kind == "open" else "Save the box as", types=(W.LPCWSTR,))
+        if start and not shell32.SHCreateItemFromParsingName(
+                ctypes.c_wchar_p(start), None, guid("{43826d1e-e718-42ee-bc55-a1e261c37bfe}"), ctypes.byref(item)):
+            check(call(dialog, 12, item, types=(ctypes.c_void_p,)), "SetFolder")
+        if name:
+            check(call(dialog, 15, name, types=(W.LPCWSTR,)), "SetFileName")
+        hr = call(dialog, 3, owner if owner is not None else app_window(), types=(W.HWND,))
+        if hr == CANCELLED:
+            return None
+        check(hr, "Show")
+        check(call(dialog, 20, ctypes.byref(result), types=(ctypes.c_void_p,)), "GetResult")
+        text = ctypes.c_wchar_p()
+        check(call(result, 5, SIGDN_FILESYSPATH, ctypes.byref(text), types=(W.DWORD, ctypes.c_void_p)),
+              "GetDisplayName")
+        try:
+            return text.value
+        finally:
+            ole32.CoTaskMemFree(text)
+    finally:
+        for obj in (result, item, dialog):
+            if obj.value:
+                call(obj, 2)                                         # IUnknown::Release
+        if inited:
+            ole32.CoUninitialize()
+        _dialog.release()
 
 
 def find(name):
@@ -383,6 +586,14 @@ def open_app(url, which):
     webbrowser.open(url)
 
 
+def open_hash(file):
+    """The page's #open=<full path> for a .box.json given on the command line ("" without one): the page reads it
+    through /api/box and saves beside it."""
+    if not file:
+        return ""
+    return "#open=" + urllib.parse.quote(os.path.abspath(file), safe="")
+
+
 def already_running(port):
     try:
         with socket.create_connection(("127.0.0.1", port), timeout=0.5):
@@ -397,10 +608,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=5198)
     ap.add_argument("--browser", default="auto", choices=["auto", "chrome", "edge", "default", "none"])
+    ap.add_argument("file", nargs="?", help="a .box.json to open")
     a = ap.parse_args()
     if not os.path.isfile(os.path.join(DIST, "index.html")):
         sys.exit("No build found. Run once:  npm install  &&  npm run setup  &&  npm run build")
-    url = "http://localhost:%d/" % a.port
+    url = "http://localhost:%d/" % a.port + open_hash(a.file)
     if already_running(a.port):   # started before: open another window on it instead of a second server
         print("superboxes already running at %s" % url)
         open_app(url, a.browser)

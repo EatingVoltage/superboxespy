@@ -237,3 +237,132 @@ export function openFile(accept: string): Promise<{ name: string; text: string }
     input.click();
   });
 }
+
+// ------------------------------------------------------------------ a box beside its own file
+// A box opened or saved through serve.py (Open..., Save as..., a .box.json handed to serve.py) keeps its full path,
+// its home: Save and the exports write beside it (.grill/stamp-case-merge.md). Only serve.py knows full paths, so it
+// reads and writes there and shows Windows' own Open / Save As dialogs. Without serve.py (npm run dev) boxes go to the
+// picked folder as before.
+type BoxReply = {
+  ok: boolean; error?: string; cancelled?: boolean; path?: string; text?: string | null; mtime?: number; dir?: string;
+  names?: string[];
+};
+
+async function boxCall(req: object): Promise<BoxReply> {
+  try {
+    const r = await fetch("/api/box", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req),
+    });
+    if (!r.ok) return { ok: false, error: `serve.py answered ${r.status}` };
+    return await r.json();
+  } catch {
+    return { ok: false, error: NEEDS_SERVE };
+  }
+}
+
+const NEEDS_SERVE = "This needs the app started with start.bat or the Start menu entry (serve.py).";
+
+let served: Promise<boolean> | null = null;
+
+/** Is serve.py there to read and write boxes by their full path? */
+export function canUseHome(): Promise<boolean> {
+  served ??= boxCall({ op: "hello" }).then((r) => r.ok);
+  return served;
+}
+
+export const dirOf = (path: string) => path.replace(/[\\/][^\\/]*$/, "");
+export const fileOf = (path: string) => path.replace(/^.*[\\/]/, "");
+export const boxNameOf = (path: string) => fileOf(path).replace(/\.box\.json$/i, "");
+/** Where the box goes when it's saved as `name` beside `home`. */
+export const homeFor = (home: string, name: string) => `${dirOf(home)}\\${safeName(name)}.box.json`;
+
+/** The picked folder's full path, if Open in LightBurn ever found it. */
+export function folderPath(): string | null {
+  return folder ? remembered(folder.name) : null;
+}
+
+export type HomeRead = { ok: true; path: string; text: string } | { ok: false; error?: string; cancelled?: boolean };
+
+const asRead = (r: BoxReply): HomeRead =>
+  r.ok && r.path && typeof r.text === "string"
+    ? { ok: true, path: r.path, text: r.text }
+    : { ok: false, error: r.error, cancelled: r.cancelled };
+
+export async function readHome(path: string): Promise<HomeRead> {
+  return asRead(await boxCall({ op: "read", path }));
+}
+
+/** Windows' Open dialog, starting in `start`: the box picked, read. */
+export async function askOpen(start: string | null): Promise<HomeRead> {
+  return asRead(await boxCall({ op: "ask_open", start }));
+}
+
+/** Windows' Save As dialog, starting in `start` with `name` filled in: the .box.json path picked. */
+export async function askSaveAs(name: string, start: string | null):
+    Promise<{ ok: true; path: string } | { ok: false; error?: string; cancelled?: boolean }> {
+  const r = await boxCall({ op: "ask_save", name, start });
+  return r.ok && r.path ? { ok: true, path: r.path } : { ok: false, error: r.error, cancelled: r.cancelled };
+}
+
+/** Write files beside the box at `home`: the folder written to, or the error. */
+export async function writeBeside(home: string, files: { name: string; content: string }[]):
+    Promise<{ ok: true; dir: string } | { ok: false; error: string }> {
+  const r = await boxCall({ op: "write", home, files });
+  return r.ok && r.dir ? { ok: true, dir: r.dir } : { ok: false, error: r.error ?? "not written" };
+}
+
+// ------------------------------------------------------------------ where a box's files go
+/** Where an export reads and writes: beside the box's own file, or <picked folder>/<box name>/. */
+export interface Place {
+  /** Names of the files there. */
+  list(): Promise<string[]>;
+  /** The newest of `names` that LightBurn itself saved (its layers carry over), or null. */
+  saved(names: string[]): Promise<string | null>;
+  /** Write the files: where they went, or null when it couldn't. */
+  write(files: { name: string; content: string }[]): Promise<string | null>;
+  /** Open the project just written there in LightBurn. */
+  open(file: string, content: string): Promise<OpenResult>;
+}
+
+export function besideHome(home: string): Place {
+  return {
+    list: async () => (await boxCall({ op: "list", home })).names ?? [],
+    async saved(names) {
+      let best: { text: string; t: number } | null = null;
+      for (const name of names) {
+        const r = await boxCall({ op: "read_beside", home, name });
+        const text = r.text ?? "";
+        const byLightBurn = text.slice(0, 600).includes("AskForSendName");
+        if (byLightBurn && (!best || (r.mtime ?? 0) > best.t)) {
+          best = { text, t: r.mtime ?? 0 };
+        }
+      }
+      return best?.text ?? null;
+    },
+    async write(files) {
+      const r = await writeBeside(home, files);
+      return r.ok ? r.dir : null;
+    },
+    async open(file, content) {
+      try {
+        const r = await fetch("/api/open-lightburn", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: `${dirOf(home)}\\${file}`, sha256: await sha256(content) }),
+        });
+        const o = await r.json();
+        return o.ok ? { ok: true, path: o.path } : { ok: false, error: o.error ?? "LightBurn didn't start." };
+      } catch {
+        return { ok: false, error: NEEDS_SERVE };
+      }
+    },
+  };
+}
+
+export function inFolder(sub: string): Place {
+  return {
+    list: () => listFolder(sub),
+    saved: (names) => lightburnSaved(sub, names),
+    write: (files) => writeToFolder(sub, files),
+    open: (file, content) => openInLightBurn(sub, file, content),
+  };
+}

@@ -87,9 +87,11 @@ textarea.mono, .mono { font-family: var(--mono); font-size: 12px; }
   margin-right: 6px;
 }
 .brand span { color: var(--muted); font-size: 12px; }
-.gen-btn { min-width: 220px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
+/* the type button and the name give way first, so the bar stays one line in the 1500 px app window */
+.gen-btn { flex: 1 1 220px; max-width: 300px; min-width: 180px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .gen-btn b { font-weight: 600; }
 .gen-btn span { color: var(--muted); }
+.gen-btn span:not([aria-hidden]) { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- box type gallery */
 .gallery {
@@ -112,7 +114,10 @@ textarea.mono, .mono { font-family: var(--mono); font-size: 12px; }
 .tile.loading canvas { background: repeating-linear-gradient(45deg, #22262c 0 10px, #262a31 10px 20px); }
 .tile.failed canvas { outline: 1px solid var(--bad); }
 .gallery-hint { margin: 10px 2px 0; color: var(--muted); font-size: 12px; }
-.name { width: 200px; }
+.name { flex: 1 1 120px; max-width: 200px; min-width: 100px; }
+.home { color: var(--muted); font-size: 12px; max-width: 110px; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; padding: 2px 8px; border: 1px solid var(--line); border-radius: 10px; cursor: default; }
+.home::before { content: "in "; }
 .spacer { flex: 1; }
 .btn-group { display: flex; gap: 4px; }
 .folder { max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
