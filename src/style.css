@@ -284,6 +284,15 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .board-svg .label-box { fill: none; stroke: var(--accent); stroke-dasharray: 2 2; stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
 .board-bar .num { width: 64px; }
 
+/* ---------- face editor (src/faceeditor.ts) */
+.face-svg .face-free { fill: none; stroke: #b9a682; stroke-width: 1px; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; pointer-events: none; }
+.face-svg .face-item { stroke-dasharray: none; }
+.face-svg .face-pin { stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; pointer-events: none; }
+.face-svg .face-spot { fill: var(--accent); pointer-events: none; }
+.board-bar .face-text { width: 220px; resize: vertical; font: inherit; }
+.board-bar .bad-text { color: var(--bad); }
+.board-bar .check { display: inline-flex; gap: 4px; align-items: center; }
+
 /* ---------- stamp case: side panel */
 .stamp-add { display: flex; gap: 4px; align-items: center; }
 .stamp-add input[type=text] { flex: 1; min-width: 0; }

@@ -7,6 +7,7 @@ import { SheetView, problems } from "./sheetview";
 import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import * as sc from "./stampcase";
+import { FaceEditor, type Faces } from "./faceeditor";
 import { A3 } from "./types";
 import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
@@ -26,6 +27,7 @@ const S = {
   thicknessOverride: null as number | null,
   kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
+  faces: {} as Faces,            // the face editor's items per face (not for the stamp case: its boards are its faces)
   home: null as string | null,   // the box's own file on disk (serve.py): Save and the exports go beside it
   options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true } as Options,
   notes: "",
@@ -289,7 +291,7 @@ function changed(final: boolean) {
 function request(layout: Placement[] | null) {
   return {
     generator: S.generator, params: S.params, material: material(), sheet: S.sheet,
-    layout, options: S.options, name: S.name,
+    layout, options: S.options, name: S.name, faces: S.faces,
   };
 }
 
@@ -320,6 +322,7 @@ async function rebuild(final = true) {
     return k && k.x === p.x && k.y === p.y && k.rot === p.rot && k.sheet === p.sheet;
   }).map((p) => p.part));
   sheetView.show(b, S.sheet, S.placements, S.options.rest_cuts);
+  if (!isStamp()) faceEditor.update();
   if (isStamp() && b.stampcase) {
     editor.update();
     if ($("params").contains(document.activeElement)) sc.renderCheck($("params"), stampHost, editor);
@@ -363,7 +366,8 @@ function updateMessages() {
 const H = { undo: [] as string[], redo: [] as string[], last: "" };
 
 function snapshot() {
-  return JSON.stringify({ params: S.params, layout: S.placements.filter((p) => S.manual.has(p.part)), options: S.options });
+  return JSON.stringify({ params: S.params, layout: S.placements.filter((p) => S.manual.has(p.part)), options: S.options,
+    faces: S.faces });
 }
 
 function remember() {
@@ -387,10 +391,12 @@ function restore(snap: string) {
   S.placements = o.layout;
   S.manual = new Set(o.layout.map((p: Placement) => p.part));
   S.options = o.options;
+  S.faces = o.faces ?? {};
   H.last = snap;
   S.dirty = true;
   renderParamPanel();
   renderOutput();
+  if (!isStamp()) faceEditor.update();     // the tabs' counts at once; the faces' drawing follows the build
   rebuild(true);
 }
 
@@ -441,6 +447,17 @@ const stampHost: sc.StampHost = {
 };
 
 const editor = new sc.BoardEditor($("board-tabs"), $("board"), $("board-bar"), stampHost);
+
+// ------------------------------------------------------------------ face editor (every type but the stamp case)
+const faceEditor = new FaceEditor($("face-tabs"), $("face"), $("face-bar"), {
+  build: () => S.build,
+  faces: () => S.faces,
+  commit(faces) {
+    S.faces = faces;
+    changed(true);
+  },
+  showSheets: (on) => stampHost.showSheets(on),
+});
 
 // ------------------------------------------------------------------ sheets view
 const sheetView = new SheetView($("sheets"), {
@@ -493,7 +510,8 @@ function config(): BoxConfig {
           ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
     sheet: S.sheet,
     layout: S.manual.size ? S.placements : null,
-    options: S.options, notes: S.notes, saved: new Date().toISOString(),
+    options: S.options, ...(Object.keys(S.faces).length ? { faces: S.faces } : {}), notes: S.notes,
+    saved: new Date().toISOString(),
   };
 }
 
@@ -526,12 +544,14 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
     rest_cuts: o?.rest_cuts ?? true,
   };
   S.notes = c.notes ?? "";
+  S.faces = isStamp() ? {} : structuredClone(c.faces ?? {});
   S.placements = c.layout ?? [];
   S.manual = new Set((c.layout ?? []).map((p) => p.part));
   S.fileVersion = isStamp() ? null : c.boxes_version ?? null;   // boxes.py doesn't make stamp cases
   S.dirty = false;
   editor.selected.clear();
   editor.setActive(isStamp());
+  faceEditor.setActive(!isStamp());
   resetHistory();
   setGenLabel();
   ($("name") as HTMLInputElement).value = S.name;
@@ -994,6 +1014,9 @@ function wire() {
     }
     if (isStamp() && !$("board").hidden && !(e.target as HTMLElement).closest(".sheets, .gallery, .menu")) {
       if (editor.key(k, e)) e.preventDefault();
+    }
+    if (faceEditor.face && !(e.target as HTMLElement).closest(".sheets, .gallery, .menu")) {
+      if (faceEditor.key(e)) e.preventDefault();
     }
   });
   wireSplit();

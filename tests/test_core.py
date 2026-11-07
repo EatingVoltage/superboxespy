@@ -319,6 +319,76 @@ class Export(unittest.TestCase):
         self.assertEqual(X.mark_text(datetime.date(2027, 3, 1)), "SG327")   # no leading zero (eVlaser)
 
 
+class Faces(unittest.TestCase):
+    """The face editor's items on the closed box (python/superboxes/faces.py), on the CANVAS example: an ABox with the
+    over-the-top lid."""
+
+    def req(self, x=240, items=None):
+        return {"generator": "ABox", "params": ui_params("ABox", x=x, y=170, h=90, Lid_style="overthetop"),
+                "material": MAT, "options": {}, "faces": {"top": items or []}}
+
+    def test_the_shoebox_lid_sits_on_the_box(self):
+        req = self.req()
+        parts, info = api._render(req)
+        asm = api.build(req)["assembly"]
+        mats = [a["m"] if a["group"] != "loose" else None for a in asm["parts"]]
+        self.assertTrue(all(m is not None for m in mats))
+        self.assertEqual(assembly.clashes(parts, mats, info["thickness"]), [])
+        self.assertEqual(assembly.loose_parts(parts, mats, info["thickness"]), [])
+        lid = [a for a in asm["parts"] if a["group"] == "lid"]
+        self.assertEqual(len(lid), 5)
+        self.assertTrue(all(a["motion"] == lid[0]["motion"] and a["motion"]["dir"] == [0, 0, 1] for a in lid))
+
+    def test_faces_of_the_closed_box(self):
+        b = api.build(self.req())
+        names = {f: b["parts"][v["part"]]["name"] for f, v in b["faces"].items()}
+        self.assertEqual(set(names), {"top", "bottom", "front", "back", "left", "right"})
+        self.assertEqual(names["top"], "lid top")
+        self.assertNotIn("lid", names["front"])              # the wall, not the lid's rim
+        top = b["faces"]["top"]
+        # the finished wood, a ruler's reading: the cut path's box less the burn on both sides
+        self.assertAlmostEqual(top["w"], b["parts"][top["part"]]["w"] - 2 * MAT["burn"], places=2)
+
+    def test_items_keep_their_anchor_when_the_box_grows(self):
+        items = [{"id": "logo", "kind": "logo", "logo": "none.svg", "size": 20, "anchor": "tl", "dx": 14, "dy": -14},
+                 {"id": "t", "kind": "text", "text": "CANVAS SYNTH", "size": 18, "bold": True, "anchor": "c"},
+                 {"id": "s", "kind": "text", "text": "STARTER KIT\nBASE18", "size": 6, "anchor": "br", "dx": -14, "dy": 14}]
+        for x in (240, 280):
+            with self.subTest(x=x):
+                f = api.build(self.req(x, items))["faces"]["top"]
+                got = {i["id"]: i for i in f["items"]}
+                x0, y0, x1, y1 = got["t"]["bounds"]
+                self.assertAlmostEqual((x0 + x1) / 2, f["w"] / 2, places=3)          # still centred
+                self.assertAlmostEqual((y0 + y1) / 2, f["h"] / 2, places=3)
+                x0, y0, x1, y1 = got["s"]["bounds"]
+                self.assertAlmostEqual(f["w"] - x1, 14, places=3)                     # 14 mm from the right
+                self.assertAlmostEqual(y0, 14, places=3)
+                self.assertFalse(got["t"]["bad"] or got["s"]["bad"])
+
+    def test_an_item_in_the_finger_joints_is_refused(self):
+        req = self.req(items=[{"id": "t", "kind": "text", "text": "EDGE", "size": 8, "anchor": "bl", "dx": 1, "dy": 1}])
+        b = api.build(req)
+        self.assertTrue(b["faces"]["top"]["items"][0]["bad"])
+        req["layout"] = b["placements"]
+        res = api.export(req)
+        self.assertFalse(res["ok"])
+        self.assertIn("top", res["error"])
+
+    def test_the_lid_is_engraved_as_seen_from_outside(self):
+        req = self.req(items=[{"id": "t", "kind": "text", "text": "CANVAS", "size": 12, "anchor": "c"}])
+        b = api.build(req)
+        top = b["faces"]["top"]
+        part = b["parts"][top["part"]]
+        engraved = [d for d in part["deco"] if d["layer"] == M.LINE]
+        self.assertTrue(engraved)
+        # the lid lies on the box unturned (x -> X, y -> Y), so its own drawing is the view from above, unmirrored
+        xs = [p[0] for d in engraved for line in d["lines"] for p in line]
+        self.assertAlmostEqual((min(xs) + max(xs)) / 2, part["w"] / 2, delta=0.05)
+        req["layout"] = b["placements"]
+        res = api.export(req)
+        self.assertTrue(res["ok"], res.get("error"))
+
+
 class Calibration(unittest.TestCase):
     def test_kerf_math(self):
         self.assertAlmostEqual(calibration.kerf_from(98.5), 0.15)
@@ -443,7 +513,11 @@ class Assembly(unittest.TestCase):
             with self.subTest(style=style):
                 parts, _ = capture.render("ABox", ui_params("ABox", x=60, y=50, h=40, Lid_style=style), 3.6, 0.1)
                 asm = assembly.assemble("ABox", parts, 3.6)
-                self.assertEqual(sum(pl["kind"] == "wall" for pl in asm["parts"]), 5)
+                body = [pl for pl in asm["parts"] if pl["kind"] == "wall" and pl["group"] == "body"]
+                self.assertEqual(len(body), 5)
+                # the over-the-top lid goes on the box (the face editor's example); the others lie beside it
+                lid = [pl for pl in asm["parts"] if pl["kind"] == "wall" and pl["group"] == "lid"]
+                self.assertEqual(len(lid), 5 if style == "overthetop" else 0)
                 ms = [pl["m"] if pl["kind"] == "wall" else None for pl in asm["parts"]]
                 self.assertEqual(assembly.clashes(parts, ms, 3.6), [])
 

@@ -10,6 +10,7 @@ A request:
      "layout": [placement, ...]       # hand-placed parts to keep (build) / the full layout (export)
      "options": {"labels_engrave": false, "mark": {"enabled": true, "text": null, "part": null},
                  "rest_cuts": true},          # a last layer cuts the rest wood free (sheets.rest_pieces)
+     "faces": {"top": [item, ...], ...},      # the face editor's items per face (faces.py)
      "draft": true}                   # build only: a slider is being dragged - the mark keeps its last spot
 """
 import json
@@ -17,7 +18,7 @@ import traceback
 
 from evlaser import machine as M
 
-from . import assembly, capture, catalog, export as X, kerf, sheets as S
+from . import assembly, capture, catalog, export as X, faces as F, kerf, sheets as S
 
 _cache = {}
 
@@ -89,21 +90,30 @@ def build(req):
     warnings += w2
     sizes = [(p.w, p.h) for p in parts]
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
+    asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
+                            info.get("attrs"))
+    face_info = _faces(req, parts, asm, info["thickness"], deco)
     out_parts = []
     for p in parts:
         j = p.to_json()
         j["deco"] = [{"layer": layer, "lines": [[[round(x, 3), round(y, 3)] for x, y in ls.coords] for ls in m.geoms]}
                      for layer, m in deco.get(p.index, [])]
         out_parts.append(j)
-    asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
-                            info.get("attrs"))
     return {
         "ok": True, "title": _title(req), "parts": out_parts, "placements": placements, "too_big": too_big,
         "assembly": asm,
         "sheets": [{"index": n, "offcut": round(S.offcut(placements, sizes, sheet, n), 1)} for n in range(n_sheets)],
         "warnings": warnings, "info": info, "boxes_version": catalog.boxes_version(),
-        "mark": (opts.get("mark") or {}).get("text") or X.mark_text(),
+        "mark": (opts.get("mark") or {}).get("text") or X.mark_text(), "faces": face_info, "logos": F.logos(),
     }
+
+
+def _faces(req, parts, asm, t, deco):
+    """The face editor's items (req["faces"]) added to `deco` per part; the faces' info for the editor."""
+    face_deco, face_info = F.decorate(parts, asm, req.get("faces"), t)
+    for i, items in face_deco.items():
+        deco.setdefault(i, []).extend(items)
+    return face_info
 
 
 def export(req):
@@ -126,6 +136,10 @@ def export(req):
         return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
     opts = req.get("options") or {}
     deco, _w = X.decorations(parts, opts, info["thickness"], req["generator"])
+    asm = assembly.assemble(req["generator"], parts, info["thickness"], layout, float(sheet["w"]), info.get("attrs"))
+    bad = F.problems(_faces(req, parts, asm, info["thickness"], deco))
+    if bad:
+        return {"ok": False, "error": "Move these first:\n" + "\n".join(bad)}
     mat = req.get("material") or {}
     fit = mat.get("fit_note") or (("burn X %.3f / Y %.3f mm (per axis)" % info["comp"]) if info["comp"]
                                   else "burn %.2f mm" % info["burn"])

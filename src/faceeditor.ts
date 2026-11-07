@@ -1,0 +1,384 @@
+// The face editor: text and logos on a box's outside faces (python/superboxes/faces.py, .grill/face-editor.md).
+//
+// The 2D half gets a tab per face of the closed box (Top, Front, Back, Left, Right, Bottom) beside Sheets. A face is
+// drawn as seen from outside, up being the box's up (its back for the top). Python places every item and says whether
+// it's clear of the edges; while an item is dragged it moves here, and on release it pins to the nearest of the 9
+// anchor spots (corners, edge middles, centre) with its distance to it, so it keeps its place when the box changes
+// size. Every edit goes to the host as the box's new items, which keeps undo and asks Python again.
+
+import { h } from "./params";
+import type { Build, FaceInfo, FaceItem } from "./types";
+
+const NS = "http://www.w3.org/2000/svg";
+const svg = (tag: string, attrs: Record<string, any> = {}) => {
+  const el = document.createElementNS(NS, tag);
+  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
+  return el;
+};
+
+export type Faces = Record<string, FaceItem[]>;
+
+export interface FaceHost {
+  build(): Build | null;
+  faces(): Faces;
+  commit(faces: Faces): void;
+  showSheets(on: boolean): void;
+}
+
+const ORDER = ["top", "front", "back", "left", "right", "bottom"];
+// The faces the editor offers so far: the top first, through a test cut (.grill/face-editor.md, "one face end to end").
+// Python places items on every face; walls follow once the cut looks right (with a keep-out under a lid's rims).
+const READY = new Set(["top"]);
+const TITLE: Record<string, string> = { top: "Top", front: "Front", back: "Back", left: "Left", right: "Right", bottom: "Bottom" };
+const ANCHOR_NAME: Record<string, string> = {
+  tl: "top left", t: "top", tr: "top right", l: "left", c: "centre", r: "right", bl: "bottom left", b: "bottom", br: "bottom right",
+};
+const SNAP = 3;          // mm: closer than this to the centre line snaps onto it
+
+/** The anchor's point on a rectangle [x0, y0, x1, y1] (python faces._spot). */
+function spot(r: number[], anchor: string): [number, number] {
+  const [x0, y0, x1, y1] = r;
+  const col = "lr".includes(anchor.slice(-1)) ? anchor.slice(-1) : "c";
+  const row = "tb".includes(anchor[0]) ? anchor[0] : "c";
+  return [col === "l" ? x0 : col === "r" ? x1 : (x0 + x1) / 2, row === "b" ? y0 : row === "t" ? y1 : (y0 + y1) / 2];
+}
+
+/** The anchor an item gets where it's dropped: the third of the face its centre is in. */
+export function anchorAt(face: { w: number; h: number }, bounds: number[]): string {
+  const cx = (bounds[0] + bounds[2]) / 2, cy = (bounds[1] + bounds[3]) / 2;
+  const col = cx < face.w / 3 ? "l" : cx > (2 * face.w) / 3 ? "r" : "c";
+  const row = cy > (2 * face.h) / 3 ? "t" : cy < face.h / 3 ? "b" : "c";
+  if (row === "c") return col;
+  return col === "c" ? row : row + col;
+}
+
+/** The item's anchor and offset once its bounds are at `bounds`: pinned to the nearest spot, snapped onto the
+ *  centre lines, on a 0.5 mm grid. */
+export function pin(face: { w: number; h: number }, bounds: number[]): { anchor: string; dx: number; dy: number } {
+  const anchor = anchorAt(face, bounds);
+  const [fx, fy] = spot([0, 0, face.w, face.h], anchor);
+  const [ix, iy] = spot(bounds, anchor);
+  let dx = ix - fx, dy = iy - fy;
+  const col = "lr".includes(anchor.slice(-1)) ? anchor.slice(-1) : "c";
+  const row = "tb".includes(anchor[0]) ? anchor[0] : "c";
+  if (col === "c" && Math.abs(dx) < SNAP) dx = 0;
+  if (row === "c" && Math.abs(dy) < SNAP) dy = 0;
+  const r = (v: number) => Math.round(v * 2) / 2 || 0;
+  return { anchor, dx: r(dx), dy: r(dy) };
+}
+
+const ringsD = (rings: number[][][], dx = 0, dy = 0) =>
+  rings.map((r) => "M" + r.map(([x, y]) => `${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join("L") + "Z").join("");
+const linesD = (lines: number[][][], dx = 0, dy = 0) =>
+  lines.map((l) => "M" + l.map(([x, y]) => `${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join("L")).join("");
+
+let nextId = 0;
+const newId = () => `i${Date.now().toString(36)}${(nextId++).toString(36)}`;
+
+export class FaceEditor {
+  private tab = "sheets";              // a face role, or "sheets"
+  private selected: string | null = null;
+  private active = false;
+  private svgRoot: SVGSVGElement;
+  private drag: { id: string; x0: number; y0: number; dx: number; dy: number; moved: boolean } | null = null;
+
+  constructor(private tabs: HTMLElement, private root: HTMLElement, private bar: HTMLElement, private host: FaceHost) {
+    this.svgRoot = svg("svg", { class: "board-svg face-svg", tabindex: 0 }) as SVGSVGElement;
+    root.append(this.svgRoot);
+    this.svgRoot.addEventListener("pointerdown", (e) => this.down(e));
+    this.svgRoot.addEventListener("pointermove", (e) => this.move(e));
+    this.svgRoot.addEventListener("pointerup", (e) => this.up(e));
+    new ResizeObserver(() => this.draw()).observe(root);
+  }
+
+  /** Shown for every type but the stamp case (which has its own board editor). */
+  setActive(on: boolean) {
+    this.active = on;
+    this.tabs.hidden = !on;
+    this.showFace(on && this.tab !== "sheets");
+  }
+
+  /** The face shown, or null on Sheets. */
+  get face(): string | null {
+    return this.active && this.tab !== "sheets" ? this.tab : null;
+  }
+
+  private info(): Record<string, FaceInfo> {
+    return this.host.build()?.faces ?? {};
+  }
+
+  private items(role = this.tab): FaceItem[] {
+    return this.host.faces()[role] ?? [];
+  }
+
+  update() {
+    if (!this.active) return;
+    const info = this.info();
+    if (this.tab !== "sheets" && !(info[this.tab] && READY.has(this.tab))) this.setTab("sheets");
+    if (this.selected && !this.items().some((i) => i.id === this.selected)) this.selected = null;
+    this.renderTabs();
+    this.draw();
+    this.renderBar();
+  }
+
+  private showFace(on: boolean) {
+    this.root.hidden = this.bar.hidden = !on;
+    this.host.showSheets(!on);
+  }
+
+  setTab(role: string) {
+    this.tab = role;
+    this.selected = null;
+    this.renderTabs();
+    this.showFace(role !== "sheets");
+    this.draw();
+    this.renderBar();
+  }
+
+  private renderTabs() {
+    const info = this.info();
+    const faces = this.host.faces();
+    this.tabs.replaceChildren();
+    for (const role of ["sheets", ...ORDER.filter((r) => info[r] && READY.has(r))]) {
+      const n = role === "sheets" ? 0 : (faces[role] ?? []).length;
+      const b = h("button", { role: "tab", "aria-selected": this.tab === role,
+        title: role === "sheets" ? "The parts on the sheets" : `What goes on the ${role}, seen from outside` },
+        role === "sheets" ? "Sheets" : TITLE[role] + (n ? ` · ${n}` : ""));
+      b.onclick = () => this.setTab(role);
+      this.tabs.append(b);
+    }
+    this.tabs.hidden = !this.active || this.tabs.children.length < 2;   // no face to show: no tabs either
+  }
+
+  // ---------------------------------------------------------------- drawing
+  private draw() {
+    const f = this.info()[this.tab];
+    if (!f || this.root.hidden) return;
+    const pad = Math.max(10, 0.08 * Math.max(f.w, f.h));
+    this.svgRoot.setAttribute("viewBox", `${-pad} ${-(f.h + pad)} ${f.w + 2 * pad} ${f.h + 2 * pad}`);
+    const g = svg("g", { transform: "scale(1 -1)" });
+    g.append(svg("path", { d: ringsD(f.outline), class: "board-wood", "fill-rule": "evenodd" }));
+    g.append(svg("path", { d: ringsD(f.free), class: "face-free" }));
+    const items = new Map(this.items().map((i) => [i.id, i]));
+    const d = this.drag;
+    for (const it of f.items) {
+      if (!it.bounds || !items.has(it.id)) continue;
+      const [ox, oy] = d && d.id === it.id ? [d.dx, d.dy] : [0, 0];
+      const [x0, y0, x1, y1] = it.bounds;
+      g.append(svg("path", { d: linesD(it.lines, ox, oy), class: "board-line" }));
+      const bad = d && d.id === it.id && d.moved ? !this.clear(f, [x0 + ox, y0 + oy, x1 + ox, y1 + oy]) : it.bad;
+      g.append(svg("rect", { x: x0 + ox - 1, y: y0 + oy - 1, width: x1 - x0 + 2, height: y1 - y0 + 2, "data-id": it.id,
+        class: `hit face-item${this.selected === it.id ? " sel" : ""}${bad ? " bad" : ""}` }));
+    }
+    // while dragging: where it will pin
+    if (d?.moved) {
+      const it = f.items.find((i) => i.id === d.id);
+      if (it?.bounds) {
+        const b = [it.bounds[0] + d.dx, it.bounds[1] + d.dy, it.bounds[2] + d.dx, it.bounds[3] + d.dy];
+        const p = pin(f, b);
+        const [fx, fy] = spot([0, 0, f.w, f.h], p.anchor);
+        const [ix, iy] = spot(b, p.anchor);
+        g.append(svg("line", { x1: fx, y1: fy, x2: ix, y2: iy, class: "face-pin" }));
+        g.append(svg("circle", { cx: fx, cy: fy, r: 1.6, class: "face-spot" }));
+      }
+    }
+    this.svgRoot.replaceChildren(g);
+  }
+
+  /** Bounds inside the free area (approximately: its four corners; Python has the last word). */
+  private clear(f: FaceInfo, b: number[]): boolean {
+    const inside = (x: number, y: number) => {
+      let n = 0;
+      for (const r of f.free) {
+        for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
+          const [xi, yi] = r[i], [xj, yj] = r[j];
+          if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) n++;
+        }
+      }
+      return n % 2 === 1;
+    };
+    return inside(b[0], b[1]) && inside(b[2], b[1]) && inside(b[2], b[3]) && inside(b[0], b[3]);
+  }
+
+  private toFace(e: PointerEvent): [number, number] {
+    const m = this.svgRoot.getScreenCTM()!.inverse();
+    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
+    return [p.x, -p.y];
+  }
+
+  private down(e: PointerEvent) {
+    if (e.button !== 0) return;
+    this.svgRoot.focus({ preventScroll: true });
+    const id = (e.target as Element).getAttribute?.("data-id");
+    this.selected = id;
+    this.renderBar();
+    if (!id) {
+      this.draw();
+      return;
+    }
+    const [x, y] = this.toFace(e);
+    this.drag = { id, x0: x, y0: y, dx: 0, dy: 0, moved: false };
+    try {
+      this.svgRoot.setPointerCapture(e.pointerId);
+    } catch {
+      /* a pointer the browser doesn't track (a synthetic event): the drag still works inside the face */
+    }
+    this.draw();
+  }
+
+  private move(e: PointerEvent) {
+    const d = this.drag;
+    if (!d) return;
+    const [x, y] = this.toFace(e);
+    d.dx = x - d.x0;
+    d.dy = y - d.y0;
+    if (!d.moved && Math.hypot(d.dx, d.dy) < 0.8) return;
+    d.moved = true;
+    this.draw();
+  }
+
+  private up(e: PointerEvent) {
+    const d = this.drag;
+    this.drag = null;
+    if (this.svgRoot.hasPointerCapture(e.pointerId)) this.svgRoot.releasePointerCapture(e.pointerId);
+    if (!d?.moved) {
+      this.draw();
+      return;
+    }
+    this.moveBy(d.id, d.dx, d.dy);
+  }
+
+  /** Move an item by (dx, dy) mm and pin it where it lands. */
+  private moveBy(id: string, dx: number, dy: number) {
+    const f = this.info()[this.tab];
+    const it = f?.items.find((i) => i.id === id);
+    if (!f || !it?.bounds) return;
+    const b = [it.bounds[0] + dx, it.bounds[1] + dy, it.bounds[2] + dx, it.bounds[3] + dy];
+    this.change(id, pin(f, b));
+  }
+
+  // ---------------------------------------------------------------- edits
+  private change(id: string, patch: Partial<FaceItem>) {
+    const faces = structuredClone(this.host.faces());
+    const list = faces[this.tab] ?? [];
+    const it = list.find((i) => i.id === id);
+    if (!it) return;
+    Object.assign(it, patch);
+    faces[this.tab] = list;
+    this.host.commit(faces);
+  }
+
+  add(kind: "text" | "logo") {
+    const f = this.info()[this.tab];
+    if (!f) return;
+    const logos = this.host.build()?.logos ?? [];
+    const item: FaceItem = kind === "text"
+      ? { id: newId(), kind, text: "TEXT", size: 10, bold: false, style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 }
+      : { id: newId(), kind, logo: logos.find((l) => l.includes("lite")) ?? logos[0] ?? "", size: 20, rot: 0,
+          anchor: "tl", dx: 15, dy: -15 };
+    const faces = structuredClone(this.host.faces());
+    faces[this.tab] = [...(faces[this.tab] ?? []), item];
+    this.selected = item.id;
+    this.host.commit(faces);
+  }
+
+  private remove() {
+    if (!this.selected) return;
+    const faces = structuredClone(this.host.faces());
+    faces[this.tab] = (faces[this.tab] ?? []).filter((i) => i.id !== this.selected);
+    if (!faces[this.tab].length) delete faces[this.tab];
+    this.selected = null;
+    this.host.commit(faces);
+  }
+
+  private duplicate() {
+    const it = this.items().find((i) => i.id === this.selected);
+    if (!it) return;
+    const copy = { ...structuredClone(it), id: newId(), dy: it.dy - Math.max(4, it.size * 1.5) };
+    const faces = structuredClone(this.host.faces());
+    faces[this.tab] = [...(faces[this.tab] ?? []), copy];
+    this.selected = copy.id;
+    this.host.commit(faces);
+  }
+
+  /** Keys while the face is shown: arrows nudge (Shift 10 mm), R rotates, Ctrl+D duplicates, Del deletes. */
+  key(e: KeyboardEvent): boolean {
+    if (!this.face || !this.selected) return false;
+    const it = this.items().find((i) => i.id === this.selected);
+    if (!it) return false;
+    const step = e.shiftKey ? 10 : 1;
+    const k = e.key;
+    if ((e.ctrlKey || e.metaKey) && k.toLowerCase() === "d") this.duplicate();
+    else if (e.ctrlKey || e.metaKey || e.altKey) return false;
+    else if (k === "Delete" || k === "Backspace") this.remove();
+    else if (k === "r" || k === "R") this.change(it.id, { rot: (((it.rot ?? 0) + (e.shiftKey ? 270 : 90)) % 360) as FaceItem["rot"] });
+    else if (k === "Escape") {
+      this.selected = null;
+      this.draw();
+      this.renderBar();
+    } else if (k.startsWith("Arrow")) {
+      const [dx, dy] = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] }[k as "ArrowUp"];
+      this.moveBy(it.id, dx, dy);
+    } else return false;
+    return true;
+  }
+
+  // ---------------------------------------------------------------- the bar under the face
+  private renderBar() {
+    const f = this.info()[this.tab];
+    if (!f) return;
+    const it = this.items().find((i) => i.id === this.selected);
+    const btn = (label: string, title: string, run: () => void) => {
+      const b = h("button", { title }, label);
+      b.onclick = run;
+      return b;
+    };
+    const kids: (Node | string)[] = [];
+    if (!it) {
+      kids.push(btn("Add text", "Text in eV Sans, engraved", () => this.add("text")),
+        btn("Add logo", "An eV logo, engraved", () => this.add("logo")),
+        h("span", { class: "hint" }, `${TITLE[this.tab]}, seen from outside: ${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm. ` +
+          "Drag an item: it keeps its place from the nearest corner, edge or the centre when the box changes size. " +
+          "The dashed line keeps clear of the edges and finger joints."));
+      this.bar.replaceChildren(...kids);
+      return;
+    }
+    const num = (value: number, label: string, set: (v: number) => void) => {
+      const i = h("input", { type: "number", min: 1, step: 0.5, value: value, class: "num", "aria-label": label }) as HTMLInputElement;
+      i.onchange = () => {
+        const v = Number(i.value);
+        if (v > 0) set(v);
+      };
+      return i;
+    };
+    const where = `${ANCHOR_NAME[it.anchor]}${it.dx || it.dy ? `, ${Math.abs(it.dx)} / ${Math.abs(it.dy)} mm` : ""}`;
+    const state = f.items.find((i) => i.id === it.id)?.bad ? h("span", { class: "bad-text" }, "runs into an edge or a finger joint") : "";
+    if (it.kind === "text") {
+      const text = h("textarea", { rows: 1, class: "face-text", spellcheck: "false", "aria-label": "Text" }) as HTMLTextAreaElement;
+      text.value = it.text ?? "";
+      text.rows = Math.min(4, Math.max(1, text.value.split("\n").length));
+      text.onchange = () => this.change(it.id, { text: text.value });
+      const style = h("select", { "aria-label": "Engraving" }) as HTMLSelectElement;
+      for (const [v, label] of [["outline", "Outline"], ["hatch", "Hatched"]]) {
+        style.append(h("option", { value: v, selected: (it.style ?? "outline") === v }, label));
+      }
+      style.onchange = () => this.change(it.id, { style: style.value as FaceItem["style"] });
+      const bold = h("input", { type: "checkbox", checked: !!it.bold }) as HTMLInputElement;
+      bold.onchange = () => this.change(it.id, { bold: bold.checked });
+      kids.push(text, h("span", {}, "cap"), num(it.size, "Cap height, mm", (v) => this.change(it.id, { size: v })),
+        h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), style);
+    } else {
+      const logos = this.host.build()?.logos ?? [];
+      const sel = h("select", { "aria-label": "Logo" }) as HTMLSelectElement;
+      for (const l of logos) sel.append(h("option", { value: l, selected: l === it.logo }, l.replace(/\.svg$/i, "")));
+      if (!logos.length) sel.append(h("option", {}, "no logos (start the app with serve.py)"));
+      sel.onchange = () => this.change(it.id, { logo: sel.value });
+      kids.push(sel, h("span", {}, "height"), num(it.size, "Logo height, mm", (v) => this.change(it.id, { size: v })),
+        h("span", { class: "unit" }, "mm"));
+    }
+    kids.push(btn("Rotate", "R (Shift+R the other way)", () => this.change(it.id, { rot: (((it.rot ?? 0) + 90) % 360) as FaceItem["rot"] })),
+      btn("Duplicate", "Ctrl+D", () => this.duplicate()), btn("Delete", "Del", () => this.remove()),
+      h("span", { class: "hint" }, where), state);
+    this.bar.replaceChildren(...kids);
+  }
+}

@@ -89,6 +89,15 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
 - **Maker's mark** `SG` + month + year of the cut (`SG1026`) goes on the bottom, on the LINE layer, never on a lid.
   **Mark here** in the part bar under the sheets moves it to the selected part.
   **Engrave part labels** is off by default: labels then only sit on T1 (shown in LightBurn, never cut).
+- **Text and logos on the lid** (the face editor, in progress: `.grill/face-editor.md`). A box with a top face, for
+  now ABox with the over-the-top lid, gets a **Top** tab beside **Sheets**: the lid as seen from above, the box's
+  front toward you. **Add text** (eV Sans, Regular or Bold, outline or hatched, several lines) or **Add logo** (the
+  eV logos through `serve.py`), then drag it. Where you drop an item it pins to the nearest corner, edge middle or
+  the centre and keeps its distance from it, so a centred title stays centred and a corner logo stays in its corner
+  when the box changes size; text lines align to that side. The dashed line keeps the thickness + 1.5 mm off the edges and
+  finger joints: an item across it turns red and blocks the export. **R** rotates, the arrow keys nudge (Shift 10 mm),
+  **Ctrl+D** duplicates, **Del** deletes. The items engrave on LINE on the lid's top face, the side that faces out, and
+  show on the 3D and the sheets. The walls and the other types follow once a lid has been cut.
 
 ## The stamp case
 
@@ -207,10 +216,12 @@ Done:
   dialogs on a desktop that's never shown.
 
 Not placed in 3D yet: Console2's panel springs, back-wall latches and latch clamps (8 small parts). They lie in front
-of the box. ABox's lid parts lie beside the box for the lid styles that have them.
+of the box. ABox's over-the-top lid sits on the box (Lift cover takes it off); its other lid styles' parts lie
+beside the box.
 
 Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
-1. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints.
+1. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints. Started on
+   the CANVAS starter-kit box's lid (`.grill/face-editor.md`); next a test cut of that lid, then the walls.
 2. Retire stampcaser once a case has been cut from here.
 3. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
    Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).

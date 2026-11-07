@@ -104,7 +104,39 @@ def abox(parts, t, attrs=None):
     }
     if plates:
         out[plates[0][0].index] = _place("wall", wall_matrix(plates[0][1], (x, 0, 0), -X, Y, -Z), -Z * e)  # bottom
+    out.update(_abox_lid(parts, t, x, y, h, e))
     return {"parts": out, "size": [x, y, h], "inside": _cavity((0, 0, 0), (x, y, h))}
+
+
+def _abox_lid(parts, t, x, y, h, e):
+    """ABox's over-the-top lid (Lid_style overthetop, a shoebox lid) on the box: its top rests on the walls' top
+    edges, its rims hang outside the walls with the lid's play all round, and Lift cover takes it off upward.
+    boxes.py makes the lid x + 2t + play inside, so its inner faces stand (x2 - x) / 2 off the cavity. The ontop lid
+    has the same parts at the box's own width (it sits on the walls): it, and every other style, stays loose for
+    now. {part index: placement}."""
+    named = {p.name: (p, rect(p)) for p in parts if rect(p)}
+    if not all(n in named for n in ("lid top", "lid front", "lid back", "lid left", "lid right")):
+        return {}
+    top = named["lid top"][1]
+    gx, gy = (top["x"] - x) / 2, (top["y"] - y) / 2
+    if min(gx, gy) < t:                                 # not wide enough to go over the walls: not overthetop
+        return {}
+    rim = named["lid front"][1]["y"]
+    z = h - rim
+    lift = {"type": "slide", "dir": [0, 0, 1], "max": round(rim + 30, 1)}
+    up = Z * e * 1.3
+
+    def lid(name, origin, u, v, n, out=(0, 0, 0)):
+        m = wall_matrix(named[name][1], origin, u, v, n)
+        return named[name][0].index, _place("wall", m, up + np.asarray(out) * e * 0.5, group="lid", motion=lift)
+
+    return dict([
+        lid("lid top", (-gx, -gy, h), X, Y, Z),
+        lid("lid front", (-gx, -gy, z), X, Z, -Y, -Y),
+        lid("lid back", (x + gx, y + gy, z), -X, Z, Y, Y),
+        lid("lid left", (-gx, y + gy, z), -Y, Z, -X, -X),
+        lid("lid right", (x + gx, -gy, z), Y, Z, X, X),
+    ])
 
 
 def _by_label(parts, prefix):

@@ -38,6 +38,34 @@ export interface Build {
   notes?: string;
   assembly?: unknown;
   stampcase?: StampData;       // StampCase only: what the board editor draws and hit-tests
+  faces?: Record<string, FaceInfo>;   // the closed box's faces for the face editor (python/superboxes/faces.py)
+  logos?: string[];            // the house logos on this PC (serve.py)
+}
+
+/** An item on a box face, in the face's view seen from outside (mm, y up): its own anchor point sits (dx, dy) from
+ *  the face's, so it keeps its place when the box changes size (python/superboxes/faces.py). */
+export interface FaceItem {
+  id: string;
+  kind: "text" | "logo";
+  text?: string;               // lines split by \n
+  logo?: string;               // a house logo's file name
+  size: number;                // cap height, or a logo's height, mm
+  bold?: boolean;
+  style?: "outline" | "hatch";
+  rot: 0 | 90 | 180 | 270;
+  anchor: string;              // tl t tr l c r bl b br
+  dx: number;
+  dy: number;
+}
+
+/** A face as Python drew it: its size, outline and free area (rings, view coordinates) and each item's place. */
+export interface FaceInfo {
+  part: number;
+  w: number;
+  h: number;
+  outline: number[][][];
+  free: number[][][];
+  items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][] }[];
 }
 
 // ------------------------------------------------------------------ the stamp case (python/superboxes/stampcase)
@@ -128,6 +156,7 @@ export interface BoxConfig {
   sheet: Sheet;
   layout: Placement[] | null;  // the hand-arranged layout, null = packed automatically
   options: Options;
+  faces?: Record<string, FaceItem[]>;   // the face editor's items per face (top, front, ...)
   notes: string;
   saved: string;
 }
