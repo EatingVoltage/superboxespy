@@ -86,13 +86,12 @@ def build(req):
                         % (parts[i].name, parts[i].w, parts[i].h, sheet["w"] - 2 * M.EDGE,
                            min(usable, sheet["h"] - M.EDGE) - M.EDGE))
     opts = req.get("options") or {}
-    deco, w2 = X.decorations(parts, opts, info["thickness"], req["generator"], bool(req.get("draft")))
-    warnings += w2
     sizes = [(p.w, p.h) for p in parts]
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
                             info.get("attrs"))
-    face_info = _faces(req, parts, asm, info["thickness"], deco)
+    deco, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
+    warnings += w2
     out_parts = []
     for p in parts:
         j = p.to_json()
@@ -108,12 +107,23 @@ def build(req):
     }
 
 
-def _faces(req, parts, asm, t, deco):
-    """The face editor's items (req["faces"]) added to `deco` per part; the faces' info for the editor."""
-    face_deco, face_info = F.decorate(parts, asm, req.get("faces"), t)
+def _mark_part(face_info):
+    """Where the maker's mark goes unless it was put on a part: the closed box's bottom face (eVlaser: on an
+    underside), else None (export.bottom_part decides)."""
+    return (face_info.get("bottom") or {}).get("part")
+
+
+def _decorations(req, parts, asm, info, draft=False):
+    """(deco, face info, warnings): what's engraved on each part - labels, the maker's mark (clear of the face
+    editor's items on its part) and the face editor's items (req["faces"]) - and the faces for the editor, each with
+    the mark's lines if it's there."""
+    face_deco, face_info, found = F.decorate(parts, asm, req.get("faces"), info["thickness"])
+    deco, warnings = X.decorations(parts, req.get("options") or {}, info["thickness"], req["generator"], draft,
+                                   avoid=F.footprints(face_deco), default_part=_mark_part(face_info))
+    F.show_fixed(face_info, found, deco)
     for i, items in face_deco.items():
         deco.setdefault(i, []).extend(items)
-    return face_info
+    return deco, face_info, warnings
 
 
 def export(req):
@@ -135,9 +145,9 @@ def export(req):
     if problems:
         return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
     opts = req.get("options") or {}
-    deco, _w = X.decorations(parts, opts, info["thickness"], req["generator"])
     asm = assembly.assemble(req["generator"], parts, info["thickness"], layout, float(sheet["w"]), info.get("attrs"))
-    bad = F.problems(_faces(req, parts, asm, info["thickness"], deco))
+    deco, face_info, _w = _decorations(req, parts, asm, info)
+    bad = F.problems(face_info)
     if bad:
         return {"ok": False, "error": "Move these first:\n" + "\n".join(bad)}
     mat = req.get("material") or {}
@@ -147,7 +157,8 @@ def export(req):
     mark = opts.get("mark") or {}
     if mark.get("enabled", True):
         mi = mark.get("part")
-        mi = mi if mi is not None and mi < len(parts) else X.bottom_part(parts)
+        mi = mi if mi is not None and mi < len(parts) else (_mark_part(face_info) if _mark_part(face_info) is not None
+                                                            else X.bottom_part(parts))
         mark_note = "Maker's mark %s on %s (LINE): assemble it with the mark facing out." % (
             mark.get("text") or X.mark_text(), parts[mi].name)
     else:

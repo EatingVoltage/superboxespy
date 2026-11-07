@@ -26,9 +26,8 @@ export interface FaceHost {
 }
 
 const ORDER = ["top", "front", "back", "left", "right", "bottom"];
-// The faces the editor offers so far: the top first, through a test cut (.grill/face-editor.md, "one face end to end").
-// Python places items on every face; walls follow once the cut looks right (with a keep-out under a lid's rims).
-const READY = new Set(["top"]);
+// Every face the closed box has: Python leaves out a face only a mirrored cut could decorate (assembly).
+const READY = new Set(ORDER);
 const TITLE: Record<string, string> = { top: "Top", front: "Front", back: "Back", left: "Left", right: "Right", bottom: "Bottom" };
 const ANCHOR_NAME: Record<string, string> = {
   tl: "top left", t: "top", tr: "top right", l: "left", c: "centre", r: "right", bl: "bottom left", b: "bottom", br: "bottom right",
@@ -158,11 +157,20 @@ export class FaceEditor {
     this.svgRoot.setAttribute("viewBox", `${-pad} ${-(f.h + pad)} ${f.w + 2 * pad} ${f.h + 2 * pad}`);
     const g = svg("g", { transform: "scale(1 -1)" });
     g.append(svg("path", { d: ringsD(f.outline), class: "board-wood", "fill-rule": "evenodd" }));
+    if (f.covered.length) g.append(svg("path", { d: ringsD(f.covered), class: "face-covered", "fill-rule": "nonzero" }));
     g.append(svg("path", { d: ringsD(f.free), class: "face-free" }));
+    if (f.fixed.length) g.append(svg("path", { d: linesD(f.fixed), class: "board-line face-fixed" }));
     const items = new Map(this.items().map((i) => [i.id, i]));
     const d = this.drag;
     for (const it of f.items) {
-      if (!it.bounds || !items.has(it.id)) continue;
+      if (!items.has(it.id)) continue;
+      if (!it.bounds) {
+        if (!it.error) continue;
+        const [ax, ay] = spot([0, 0, f.w, f.h], items.get(it.id)!.anchor);
+        g.append(svg("rect", { x: ax - 10, y: ay - 6, width: 20, height: 12, "data-id": it.id,
+          class: `hit face-item bad${this.selected === it.id ? " sel" : ""}` }));
+        continue;
+      }
       const [ox, oy] = d && d.id === it.id ? [d.dx, d.dy] : [0, 0];
       const [x0, y0, x1, y1] = it.bounds;
       g.append(svg("path", { d: linesD(it.lines, ox, oy), class: "board-line" }));
@@ -268,6 +276,28 @@ export class FaceEditor {
     this.host.commit(faces);
   }
 
+  /** Import SVG: a file picked here, its text kept in the box. Its own size if it says it in mm (height="40mm"). */
+  importSvg() {
+    const input = h("input", { type: "file", accept: ".svg,image/svg+xml" }) as HTMLInputElement;
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      const text = await file.text();
+      const m = (new DOMParser().parseFromString(text, "image/svg+xml").documentElement.getAttribute("height") ?? "")
+        .match(/^\s*([\d.]+)\s*(mm|cm|in)\s*$/);
+      const mm = m ? Number(m[1]) * { mm: 1, cm: 10, in: 25.4 }[m[2] as "mm"] : 0;
+      const f = this.info()[this.tab];
+      const size = mm > 0 && f ? Math.min(mm, f.h * 0.8) : 30;
+      const item: FaceItem = { id: newId(), kind: "svg", svg: text, name: file.name, size: Math.round(size * 2) / 2,
+        style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 };
+      const faces = structuredClone(this.host.faces());
+      faces[this.tab] = [...(faces[this.tab] ?? []), item];
+      this.selected = item.id;
+      this.host.commit(faces);
+    };
+    input.click();
+  }
+
   add(kind: "text" | "logo") {
     const f = this.info()[this.tab];
     if (!f) return;
@@ -337,9 +367,13 @@ export class FaceEditor {
     if (!it) {
       kids.push(btn("Add text", "Text in eV Sans, engraved", () => this.add("text")),
         btn("Add logo", "An eV logo, engraved", () => this.add("logo")),
+        btn("Import SVG", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +
+          "The file is kept in the box.", () => this.importSvg()),
         h("span", { class: "hint" }, `${TITLE[this.tab]}, seen from outside: ${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm. ` +
           "Drag an item: it keeps its place from the nearest corner, edge or the centre when the box changes size. " +
-          "The dashed line keeps clear of the edges and finger joints."));
+          "The dashed line keeps clear of the edges and finger joints" +
+          (f.covered.length ? "; the grey part is covered on the closed box (a lid's rim)." : ".") +
+          (f.fixed.length ? " The maker's mark moves out of the items' way." : "")));
       this.bar.replaceChildren(...kids);
       return;
     }
@@ -352,21 +386,30 @@ export class FaceEditor {
       return i;
     };
     const where = `${ANCHOR_NAME[it.anchor]}${it.dx || it.dy ? `, ${Math.abs(it.dx)} / ${Math.abs(it.dy)} mm` : ""}`;
-    const state = f.items.find((i) => i.id === it.id)?.bad ? h("span", { class: "bad-text" }, "runs into an edge or a finger joint") : "";
-    if (it.kind === "text") {
-      const text = h("textarea", { rows: 1, class: "face-text", spellcheck: "false", "aria-label": "Text" }) as HTMLTextAreaElement;
-      text.value = it.text ?? "";
-      text.rows = Math.min(4, Math.max(1, text.value.split("\n").length));
-      text.onchange = () => this.change(it.id, { text: text.value });
+    const got = f.items.find((i) => i.id === it.id);
+    const state = got?.error ? h("span", { class: "bad-text" }, `can't be read: ${got.error}`)
+      : got?.bad ? h("span", { class: "bad-text" }, "runs into an edge, a finger joint or what covers it") : "";
+    const styleSel = () => {
       const style = h("select", { "aria-label": "Engraving" }) as HTMLSelectElement;
       for (const [v, label] of [["outline", "Outline"], ["hatch", "Hatched"]]) {
         style.append(h("option", { value: v, selected: (it.style ?? "outline") === v }, label));
       }
       style.onchange = () => this.change(it.id, { style: style.value as FaceItem["style"] });
+      return style;
+    };
+    if (it.kind === "text") {
+      const text = h("textarea", { rows: 1, class: "face-text", spellcheck: "false", "aria-label": "Text" }) as HTMLTextAreaElement;
+      text.value = it.text ?? "";
+      text.rows = Math.min(4, Math.max(1, text.value.split("\n").length));
+      text.onchange = () => this.change(it.id, { text: text.value });
       const bold = h("input", { type: "checkbox", checked: !!it.bold }) as HTMLInputElement;
       bold.onchange = () => this.change(it.id, { bold: bold.checked });
       kids.push(text, h("span", {}, "cap"), num(it.size, "Cap height, mm", (v) => this.change(it.id, { size: v })),
-        h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), style);
+        h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), styleSel());
+    } else if (it.kind === "svg") {
+      kids.push(h("b", { title: "An imported SVG, kept in the box" }, it.name ?? "SVG"), h("span", {}, "height"),
+        num(it.size, "Height, mm", (v) => this.change(it.id, { size: v })), h("span", { class: "unit" }, "mm"),
+        styleSel());
     } else {
       const logos = this.host.build()?.logos ?? [];
       const sel = h("select", { "aria-label": "Logo" }) as HTMLSelectElement;

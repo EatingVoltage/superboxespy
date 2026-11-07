@@ -15,6 +15,7 @@ import math
 
 import numpy as np
 import shapely
+from shapely import affinity
 
 X, Y, Z = np.eye(3)
 
@@ -752,6 +753,29 @@ def extent(parts, placed, t):
     return {"lo": [round(float(v), 3) for v in lo], "hi": [round(float(v), 3) for v in hi]}
 
 
+def _turn_not_mirror(p, pl, tol=1e-3):
+    """A placement that mirrors (determinant < 0) shows the part's drawing back to front, which a cut part can't do:
+    it can only turn. Many assemblers' frames come out mirrored (measured 2026-11-07: 2 of ABox's placements, 5 of
+    TypeTray's, 23 of HobbyCase's). For a part symmetric about its middle, across x or y, the same solid sits there
+    turned instead: compose with that reflection, so its engraving (the maker's mark, the face editor's items) shows
+    and is placed the way it really comes out. Other parts (and parts with pieces in their holes) stay as they were,
+    flagged "mirrored": with the engraved side out they'd only fit cut mirrored."""
+    if pl.get("kind") != "wall" or p.shape is None or p.shape.is_empty:
+        return
+    m = np.asarray(pl["m"], float).reshape(3, 4)
+    if np.linalg.det(m[:, :3]) > 0:
+        return
+    x0, y0, x1, y1 = p.shape.bounds
+    for sx, sy in ((-1, 1), (1, -1)):
+        flip = affinity.scale(p.shape, sx, sy, origin=((x0 + x1) / 2, (y0 + y1) / 2))
+        if not p.children and flip.symmetric_difference(p.shape).area < tol * p.shape.area:
+            s = np.array([[sx, 0, 0, x0 + x1 if sx < 0 else 0], [0, sy, 0, y0 + y1 if sy < 0 else 0],
+                          [0, 0, 1, 0], [0, 0, 0, 1]], float)
+            pl["m"] = [round(float(v), 5) for v in (np.vstack([m, [0, 0, 0, 1]]) @ s)[:3].ravel()]
+            return
+    pl["mirrored"] = True
+
+
 def assemble(name, parts, t, placements=None, sheet_w=297.0, attrs=None):
     """{"kind": "assembled"|"flat", "parts": [placement per part index], "size": [x, y, h] | None,
         "outside": extent() | None, "inside": _cavity() | None}.
@@ -760,6 +784,8 @@ def assemble(name, parts, t, placements=None, sheet_w=297.0, attrs=None):
     fn = ASSEMBLERS.get(name)
     known = fn(parts, t, attrs or {}) if fn else {}
     placed = known.get("parts", {}) if known else {}
+    for i, pl in placed.items():
+        _turn_not_mirror(parts[i], pl)
     size = known.get("size") if known else None
     on_sheet = {pl["part"]: pl for pl in placements or []}
     out = []

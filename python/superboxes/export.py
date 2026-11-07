@@ -42,14 +42,17 @@ def label_lines(p):
     return MultiLineString([ls for m in out for ls in m.geoms]) if out else None
 
 
-def mark_spot(p, text, thickness, height=MARK_H):
+def mark_spot(p, text, thickness, height=MARK_H, avoid=None):
     """Lower-left corner for `text` on part p: inside the part, clear of holes, finger zones (thickness + 1.5 mm
-    from every edge) and nearest to the middle. None when there's no room even at 2 mm."""
+    from every edge) and `avoid` (the face editor's items, part coordinates), nearest to the middle. None when there's
+    no room even at 2 mm."""
     if p.shape is None or p.shape.is_empty:
         return None
     for h in (height, 2.0):
         w = strokefont.width(text, h)
         inner = p.shape.buffer(-(thickness + 1.5))
+        if avoid is not None and not avoid.is_empty:
+            inner = inner.difference(avoid.buffer(2.0))
         if inner.is_empty:
             continue
         c = inner.centroid
@@ -91,11 +94,13 @@ def bottom_part(parts):
 _last_spot = {}       # (box type, part index, text) -> where the mark went in the last full build
 
 
-def decorations(parts, opts, thickness, box=None, draft=False):
+def decorations(parts, opts, thickness, box=None, draft=False, avoid=None, default_part=None):
     """{part index: [(layer, MultiLineString)]} for part labels and the maker's mark, plus warnings.
     draft (while a slider is being dragged): the mark keeps the spot of the last full build of this box type
     instead of searching a new one (the search is the slowest step on a big part), or is left out if it no longer
-    fits."""
+    fits. avoid: {part index: geometry} the mark keeps clear of (the face editor's items). default_part: where the
+    mark goes unless it was put on a part (the closed box's bottom face, faces.find), else bottom_part()."""
+    avoid = avoid or {}
     deco, warnings = {}, []
     labels_on = M.LINE if opts.get("labels_engrave") else M.REF
     for p in parts:
@@ -107,7 +112,7 @@ def decorations(parts, opts, thickness, box=None, draft=False):
         text = mark.get("text") or mark_text()
         idx = mark.get("part")
         if idx is None or idx >= len(parts):
-            idx = bottom_part(parts)
+            idx = default_part if default_part is not None else bottom_part(parts)
         if draft:
             spot = _last_spot.get((box, idx, text))
             if spot and (spot[0] + strokefont.width(text, spot[2]) > parts[idx].w or spot[1] + spot[2] > parts[idx].h):
@@ -115,7 +120,7 @@ def decorations(parts, opts, thickness, box=None, draft=False):
             if spot:
                 deco.setdefault(idx, []).append((M.LINE, strokefont.text(text, *spot)))
             return deco, warnings
-        spot = mark_spot(parts[idx], text, thickness)
+        spot = mark_spot(parts[idx], text, thickness, avoid=avoid.get(idx))
         _last_spot.clear()
         _last_spot[(box, idx, text)] = spot
         if spot:

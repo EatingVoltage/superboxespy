@@ -9,7 +9,8 @@ The editor works in the face's view: seen from outside, x to the right, y up, wh
 its back for the top and its front for the bottom (tip the box toward you to read it); (0, 0) is the lower-left corner
 of the part's outline. Items are mm in that view:
 
-    {"id", "kind": "text" | "logo", "text", "logo" (a house logo's file name), "size" (cap height or logo height, mm),
+    {"id", "kind": "text" | "logo" | "svg", "text", "logo" (a house logo's file name), "svg" (an imported SVG's
+     text, svgart.py), "name" (its file name), "size" (cap height, or a logo's or SVG's height, mm),
      "bold", "style": "outline" | "hatch", "rot": 0 | 90 | 180 | 270,
      "anchor": "tl" | "t" | "tr" | "l" | "c" | "r" | "bl" | "b" | "br", "dx", "dy"}
 
@@ -21,11 +22,12 @@ from dataclasses import dataclass
 
 import numpy as np
 from shapely import affinity
-from shapely.geometry import MultiLineString, MultiPolygon, Polygon, box
+from shapely.geometry import MultiLineString, MultiPoint, MultiPolygon, Polygon, box
 from shapely.ops import unary_union
 
 from evlaser import lbrn, machine as M, textures
 
+from . import svgart
 from .stampcase import config as SC, shapes as SS
 
 X, Y, Z = np.eye(3)
@@ -48,6 +50,7 @@ class Face:
     h: float
     outline: object              # the part's shape in view coordinates
     free: object                 # where items may go, view coordinates
+    covered: object = None       # what other parts cover of it on the closed box (a lid's rim), view coordinates
 
     def to_view(self, g):
         a, b, c, d = self.rot.ravel()
@@ -61,30 +64,68 @@ class Face:
 
 
 def find(parts, asm, t):
-    """{role: Face} for the closed box: per role the biggest placed part whose engraved side looks that way."""
-    best = {}
+    """{role: Face} for the closed box: per role the biggest placed part whose engraved side looks that way and that
+    is at least half in view (an inner guide behind a side wall isn't a face). A part the assembly could only place
+    mirrored (assembly._turn_not_mirror) is left out: it would have to be cut mirrored for its engraving to face out."""
+    cands = {}
     for p, pl in zip(parts, asm.get("parts", [])):
-        if pl.get("group") == "loose" or pl.get("kind") != "wall" or p.shape is None or p.shape.is_empty:
+        if (pl.get("group") == "loose" or pl.get("kind") != "wall" or pl.get("mirrored") or p.shape is None
+                or p.shape.is_empty):
             continue
         m = np.asarray(pl["m"], float).reshape(3, 4)
         n = m[:, 2] / np.linalg.norm(m[:, 2])
         role = next((r for r in ROLES if float(n @ NORMAL[r]) > 0.99), None)
-        if role and (role not in best or p.shape.area > best[role][0].shape.area):
-            best[role] = (p, m)
+        if role:
+            cands.setdefault(role, []).append((p, m))
     out = {}
-    for role, (p, m) in best.items():
-        up = UP[role]
-        right = np.cross(up, NORMAL[role])
-        rot = np.array([[right @ m[:, 0], right @ m[:, 1]], [up @ m[:, 0], up @ m[:, 1]]])
-        face = Face(role, p.index, rot, np.zeros(2), 0, 0, None, None)
-        outline = face.to_view(p.shape)
-        x0, y0, x1, y1 = outline.bounds
-        face.off = np.array([-x0, -y0])
-        face.outline = affinity.translate(outline, -x0, -y0)
-        face.w, face.h = x1 - x0, y1 - y0
-        face.free = face.outline.buffer(-(t + KEEP_OUT))            # as the maker's mark keeps clear (export.mark_spot)
-        out[role] = face
+    for role, found in cands.items():
+        for p, m in sorted(found, key=lambda c: -c[0].shape.area):
+            face = _face(role, p, m, parts, asm, t)
+            if face.covered.area <= 0.5 * face.outline.area:
+                out[role] = face
+                break
     return out
+
+
+def _face(role, p, m, parts, asm, t):
+    up = UP[role]
+    right = np.cross(up, NORMAL[role])
+    rot = np.array([[right @ m[:, 0], right @ m[:, 1]], [up @ m[:, 0], up @ m[:, 1]]])
+    face = Face(role, p.index, rot, np.zeros(2), 0, 0, None, None)
+    outline = face.to_view(p.shape)
+    x0, y0, x1, y1 = outline.bounds
+    face.off = np.array([-x0, -y0])
+    face.outline = affinity.translate(outline, -x0, -y0)
+    face.w, face.h = x1 - x0, y1 - y0
+    face.free = face.outline.buffer(-(t + KEEP_OUT))            # as the maker's mark keeps clear (export.mark_spot)
+    face.covered = _covered(face, m, parts, asm, t)
+    if not face.covered.is_empty:
+        face.free = face.free.difference(face.covered.buffer(KEEP_OUT))
+    return face
+
+
+def _covered(face, m, parts, asm, t):
+    """What other parts cover of the face on the closed box, view coordinates: every placed part whose material lies
+    wholly outside the face's outer plane (an over-the-top lid's rim in front of a wall), as the hull of its outline
+    projected onto the face."""
+    n = NORMAL[face.role]
+    up = UP[face.role]
+    right = np.cross(up, n)
+    d0 = t + n @ m[:, 3]                       # the outer face: n . x there (n is the matrix's depth column)
+    regions = []
+    for q, ql in zip(parts, asm.get("parts", [])):
+        if q.index == face.part or ql.get("group") == "loose" or q.shape is None or q.shape.is_empty:
+            continue
+        mq = np.asarray(ql["m"], float).reshape(3, 4)
+        polys = list(q.shape.geoms) if hasattr(q.shape, "geoms") else [q.shape]
+        xy = np.concatenate([np.asarray(g.exterior.coords)[:, :2] for g in polys])
+        pts = np.concatenate([np.column_stack([xy, np.full(len(xy), z), np.ones(len(xy))]) for z in (0.0, t)]) @ mq.T
+        if (pts @ n).min() < d0 - 0.05:
+            continue
+        vx = pts @ right - right @ m[:, 3] + face.off[0]
+        vy = pts @ up - up @ m[:, 3] + face.off[1]
+        regions.append(MultiPoint(np.column_stack([vx, vy])).convex_hull)
+    return unary_union(regions).intersection(face.outline) if regions else Polygon()
 
 
 # ------------------------------------------------------------------ items
@@ -96,6 +137,8 @@ def _block(item):
     if item.get("kind") == "logo":
         lines = SS.logo(item.get("logo") or "", 0, 0, size, rot=rot)
         return MultiPolygon(), lines
+    if item.get("kind") == "svg":
+        return MultiPolygon(), _svg(item, size, rot)
     rows = [r for r in str(item.get("text") or "").split("\n")]
     if not any(r.strip() for r in rows):
         return MultiPolygon(), MultiLineString()
@@ -109,6 +152,22 @@ def _block(item):
         g = affinity.rotate(g, rot, origin=(0, 0))
     hatch = textures.line_hatch(g, HATCH, angles=(45, -45)) if item.get("style") == "hatch" else MultiLineString()
     return g, hatch
+
+
+def _svg(item, size, rot):
+    """An imported SVG's lines, `size` tall and centred on the origin; hatched, its closed shapes get the hatch too."""
+    lines, rings = svgart.parse(item.get("svg") or "")
+    if lines.is_empty:
+        return MultiLineString()
+    x0, y0, x1, y1 = lines.bounds
+    k = size / (y1 - y0) if y1 > y0 else size / max(x1 - x0, 1e-9)
+    fit = [k, 0, 0, k, -(x0 + x1) / 2 * k, -(y0 + y1) / 2 * k]
+    out = affinity.affine_transform(lines, fit)
+    if item.get("style") == "hatch" and rings:
+        region = affinity.affine_transform(svgart.area(rings), fit)
+        if not region.is_empty:
+            out = unary_union([out, textures.line_hatch(region, HATCH, angles=(45, -45))])
+    return affinity.rotate(out, rot, origin=(0, 0)) if rot else out
 
 
 def _spot(bounds, anchor):
@@ -145,14 +204,18 @@ def _round(g):
 
 def decorate(parts, asm, faces_req, t):
     """The face editor's items as decorations: ({part index: [(layer, lines)]} in part coordinates, for the sheets,
-    the 3D and LightBurn, and {role: face info} for the editor: the face's size, outline and free area, and per item
-    its bounds, whether it's clear of the edges, and its lines in view coordinates)."""
+    the 3D and LightBurn; {role: face info} for the editor: the face's size, outline, free area and what covers it,
+    and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face})."""
     faces = find(parts, asm, t)
     deco, info = {}, {}
     for role, face in faces.items():
         items_out = []
         for item in (faces_req or {}).get(role, []):
-            got = place(item, face)
+            try:
+                got = place(item, face)
+            except ValueError as e:                     # an imported file that isn't SVG
+                items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "error": str(e)})
+                continue
             if got is None:
                 items_out.append({"id": item.get("id"), "bounds": None, "bad": False, "lines": []})
                 continue
@@ -163,8 +226,21 @@ def decorate(parts, asm, faces_req, t):
             items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad,
                               "lines": _round(engraved)})
         info[role] = {"part": face.part, "w": round(face.w, 2), "h": round(face.h, 2),
-                      "outline": _rings(face.outline), "free": _rings(face.free), "items": items_out}
-    return deco, info
+                      "outline": _rings(face.outline), "free": _rings(face.free), "covered": _rings(face.covered),
+                      "items": items_out, "fixed": []}
+    return deco, info, faces
+
+
+def footprints(deco):
+    """{part index: the area its items take (their boxes, part coordinates)}, for the maker's mark to keep clear of."""
+    return {i: unary_union([box(*g.bounds) for _, g in items if not g.is_empty]) for i, items in deco.items()}
+
+
+def show_fixed(info, faces, deco):
+    """What else is engraved on a face (the maker's mark, LINE), in view coordinates, for the editor to show."""
+    for role, face in faces.items():
+        lines = [face.to_view(g) for layer, g in deco.get(face.part, []) if layer == M.LINE and not g.is_empty]
+        info[role]["fixed"] = [ln for g in lines for ln in _round(g)]
 
 
 def _rings(g):
@@ -182,7 +258,8 @@ def logos():
 
 
 def problems(info):
-    """Text for the export's refusal: items that run into an edge or a finger joint."""
-    return ["An item on the %s runs into its edge or a finger joint" % role
+    """Text for the export's refusal: items that run into an edge or a finger joint, files that aren't SVG."""
+    return ["An item on the %s %s" % (role, "can't be read: " + it["error"] if it.get("error")
+                                      else "runs into its edge, a finger joint or what covers it")
             for role, f in info.items() for it in f["items"] if it["bad"]]
 

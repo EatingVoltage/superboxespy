@@ -35,6 +35,15 @@ kit; the process is discussed along the way, not settled up front.
   turns every engraved side out, right-handed, so walls need no mirroring either); the editor offers the Top tab
   (text, logos, anchors, red at the edges, undo). Python places items on all six faces; the editor shows only the
   top until the lid is cut. Example file: `CANVAS STARTER KIT.sbox`.
+- 2026-11-07, all faces, before the lid's cut (Samuel: "continue"): a face can be covered on the closed box (the
+  over-the-top lid's rims over the walls' top): every placed part wholly outside a face's plane is projected onto it
+  and kept clear of; a part less than half in view isn't a face (Console2's inner guide). The maker's mark goes on
+  the bottom face and keeps clear of the items there (it was on HingeBox's lid). SVG import (svgart.py). Every tab
+  is offered.
+- Found on the way: the assembly placed many parts mirrored (2 of ABox's, 23 of HobbyCase's), which a cut part can't
+  be, so their engraving showed back to front in the 3D and the editor would have engraved it so. A part symmetric
+  across x or y is now placed turned instead (the same solid); the three that aren't (Console's and Console2's right
+  sides, Console2's back wall) stay flagged and get no face: they'd need cutting mirrored.
 
 ## Defaults set without asking
 - Anchor distances are measured from the finished box's outside edges (what a ruler reads on the closed box). The
@@ -58,8 +67,9 @@ kit; the process is discussed along the way, not settled up front.
 - ABox's lid parts weren't placed in the 3D (every lid style lay "loose" beside the box): the slice put the
   over-the-top lid on the box, with a lift motion. The ontop lid has the same part names at the box's own width and
   stays loose, like the other styles.
-- The "walls need mirroring" worry of `.grill/stamp-case-merge.md` doesn't hold: the assembly places every part with
-  its engraved side out and right-handed (the clash tests prove the fingers meet that way).
+- The "walls need mirroring" worry of `.grill/stamp-case-merge.md` was half right: the assembly turns every engraved
+  side out, but placed many parts mirrored. Symmetric parts are now placed turned; three asymmetric ones would need a
+  mirrored cut and get no face (see Progress).
 - CANVAS's own brand font is Adam; on this box its text is eV Sans.
 
 ## Open questions

@@ -46,9 +46,11 @@ export interface Build {
  *  the face's, so it keeps its place when the box changes size (python/superboxes/faces.py). */
 export interface FaceItem {
   id: string;
-  kind: "text" | "logo";
+  kind: "text" | "logo" | "svg";
   text?: string;               // lines split by \n
   logo?: string;               // a house logo's file name
+  svg?: string;                // an imported SVG's text (it travels in the box file)
+  name?: string;               // the imported file's name
   size: number;                // cap height, or a logo's height, mm
   bold?: boolean;
   style?: "outline" | "hatch";
@@ -65,7 +67,9 @@ export interface FaceInfo {
   h: number;
   outline: number[][][];
   free: number[][][];
-  items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][] }[];
+  covered: number[][][];       // what other parts cover on the closed box (a lid's rim over a wall)
+  fixed: number[][][];         // what else is engraved there (the maker's mark), lines
+  items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][]; error?: string }[];
 }
 
 // ------------------------------------------------------------------ the stamp case (python/superboxes/stampcase)

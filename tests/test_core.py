@@ -374,6 +374,73 @@ class Faces(unittest.TestCase):
         self.assertFalse(res["ok"])
         self.assertIn("top", res["error"])
 
+    def test_every_face_reads_right_from_outside(self):
+        """Every type: a face's part is placed turned, never mirrored (a cut part can't mirror), so what the editor
+        draws engraves the right way round; and every face is in view, not an inner part behind a wall."""
+        import numpy as np
+        for name in catalog.GENERATORS:
+            with self.subTest(name=name):
+                b = api.build({"generator": name, "params": ui_params(name), "material": MAT, "options": {}})
+                for role, f in b["faces"].items():
+                    m = np.asarray(b["assembly"]["parts"][f["part"]]["m"]).reshape(3, 4)
+                    self.assertGreater(np.linalg.det(m[:, :3]), 0, role)
+                    self.assertTrue(f["free"], role)
+        b = api.build({"generator": "Console2", "params": ui_params("Console2"), "material": MAT, "options": {}})
+        self.assertNotIn("Guide", [b["parts"][f["part"]]["name"] for f in b["faces"].values()])
+
+    def test_the_lid_rims_cover_the_walls_top(self):
+        b = api.build(self.req())
+        front = b["faces"]["front"]
+        ys = [y for ring in front["covered"] for _x, y in ring]
+        rim = next(p for p in b["parts"] if p["name"] == "lid front")["h"]
+        self.assertAlmostEqual(min(ys), front["h"] - (rim - 3.6), delta=1.5)    # the rim's height down from the top
+        self.assertAlmostEqual(max(ys), front["h"], delta=0.01)
+        req = self.req()
+        req["faces"] = {"front": [{"id": "t", "kind": "text", "text": "HIDDEN", "size": 6, "anchor": "t", "dy": -8}]}
+        self.assertTrue(api.build(req)["faces"]["front"]["items"][0]["bad"])
+        req["faces"]["front"][0]["dy"] = -30
+        self.assertFalse(api.build(req)["faces"]["front"]["items"][0]["bad"])
+
+    def test_the_mark_goes_under_the_box_and_out_of_the_way(self):
+        b = api.build({"generator": "HingeBox", "params": ui_params("HingeBox"), "material": MAT, "options": {}})
+        self.assertTrue(b["faces"]["bottom"]["fixed"])                 # was on the hinged lid before 2026-11-07
+        self.assertFalse(b["faces"]["top"]["fixed"])
+        req = self.req()
+        mid = {"id": "t", "kind": "text", "text": "MADE IN AUSTRIA", "size": 10, "anchor": "c"}
+        req["faces"] = {"bottom": [mid]}
+        f = api.build(req)["faces"]["bottom"]
+        x0, y0, x1, y1 = f["items"][0]["bounds"]
+        mark = [p for line in f["fixed"] for p in line]
+        self.assertTrue(mark)
+        self.assertFalse(any(x0 - 1 < x < x1 + 1 and y0 - 1 < y < y1 + 1 for x, y in mark))
+
+    SVG = ('<svg xmlns="http://www.w3.org/2000/svg" width="40mm" height="20mm" viewBox="0 0 40 20">'
+           '<g transform="translate(2 2)"><rect width="16" height="16"/><circle cx="28" cy="8" r="7"/>'
+           '<polygon points="10,4 14,12 6,12"/><line x1="0" y1="18" x2="36" y2="18"/></g><text>not drawn</text></svg>')
+
+    def test_an_imported_svg(self):
+        from superboxes import svgart
+        lines, rings = svgart.parse(self.SVG)
+        self.assertEqual(len(rings), 3)                           # rect, circle, triangle; the line isn't closed
+        self.assertEqual(len(lines.geoms), 4)
+        self.assertAlmostEqual(svgart.height_mm(self.SVG), 20.0)
+        x0, y0, x1, y1 = lines.bounds
+        self.assertAlmostEqual(x1 - x0, 36, places=3)
+        self.assertAlmostEqual(y1 - y0, 18, places=3)
+        self.assertLess(y0, 0)                                    # Y up: the SVG's top is the highest
+        item = {"id": "a", "kind": "svg", "svg": self.SVG, "size": 18, "anchor": "c"}
+        outline = api.build(self.req(items=[item]))["faces"]["top"]["items"][0]
+        bx0, by0, bx1, by1 = outline["bounds"]
+        self.assertAlmostEqual(by1 - by0, 18, places=3)
+        self.assertAlmostEqual(bx1 - bx0, 36, places=3)           # its own proportions
+        hatched = api.build(self.req(items=[dict(item, style="hatch")]))["faces"]["top"]["items"][0]
+        self.assertGreater(len(hatched["lines"]), 10 * len(outline["lines"]))
+        req = self.req(items=[{"id": "b", "kind": "svg", "svg": "<html/>", "size": 20, "anchor": "c"}])
+        got = api.build(req)["faces"]["top"]["items"][0]
+        self.assertEqual((got["bad"], got["error"]), (True, "not an SVG file"))
+        req["layout"] = api.build(req)["placements"]
+        self.assertIn("can't be read", api.export(req)["error"])
+
     def test_the_lid_is_engraved_as_seen_from_outside(self):
         req = self.req(items=[{"id": "t", "kind": "text", "text": "CANVAS", "size": 12, "anchor": "c"}])
         b = api.build(req)
