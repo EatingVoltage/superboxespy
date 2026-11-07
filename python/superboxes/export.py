@@ -209,12 +209,33 @@ def check_layout(parts, placements, sheet, comp=None):
 
 
 # ------------------------------------------------------------------ files
-def material_layers(material):
+def material_layers(material, frame=False):
+    """(key, material, layers). frame: add the rest-piece cuts after CUT, on their own layer with CUT's values."""
     key = material.get("key", "poplar3.6")
     if key not in M.MATERIALS:
         key = "poplar3.6"
-    use = {M.CUT: "through, runs last", M.LINE: "labels, mark", M.FILL: "small fills"}
-    return key, M.MATERIALS[key], M.layers(key, use)
+    use = {M.CUT: "through" if frame else "through, runs last", M.LINE: "labels, mark", M.FILL: "small fills"}
+    layers = M.layers(key, use)
+    if frame:
+        cut = next(st for i, _, st in layers if i == M.CUT)
+        layers.append((S.FRAME_LAYER, "%d CUT frame - frees the rest pieces, runs last" % (len(layers) + 1), cut))
+    return key, M.MATERIALS[key], layers
+
+
+def rest_part(parts, on_sheet, sheet, comp=None):
+    """(pieces, Part with the cuts that free them, or None) for one sheet. on_sheet: its placements."""
+    outlines = [placed_shape(parts[pl["part"]], pl, comp) for pl in on_sheet]
+    pieces = S.rest_pieces([o.bounds for o in outlines], sheet, [parts[pl["part"]].name for pl in on_sheet])
+    lines = S.frame_lines(pieces, outlines, sheet)
+    if lines is None:
+        return [], None
+    e = G.Part("rest pieces")
+    e.add(S.FRAME_LAYER, "lines", lines)
+    return pieces, e
+
+
+def _pieces_txt(pieces):
+    return ", ".join("%s %.0f x %.0f mm" % ((p.name,) + p.size) for p in pieces)
 
 
 def kept_layers(xml):
@@ -233,40 +254,56 @@ def _time_txt(minutes):
     return ", ".join("%s %.1f min" % (k.split(" - ")[0], v) for k, v in minutes.items()) or "-"
 
 
-def project_files(name, title, parts, placements, deco, material, sheet, notes_extra="", previous=None, comp=None):
+def project_files(name, title, parts, placements, deco, material, sheet, notes_extra="", previous=None, comp=None,
+                  rest_cuts=True):
     """The whole job as ONE LightBurn project, one page per sheet (LightBurn 2.2 pages), plus one SVG per sheet.
-    {"lbrn2": (filename, text), "svgs": [(filename, text)], "sheets": [{"parts", "minutes", "offcut"}], "kept": bool}.
-    previous: text of the project's existing .lbrn2 - if LightBurn saved it, its layers are carried over. Layers
-    belong to the project in LightBurn, so the carry-over covers every page."""
-    key, mat, layers = material_layers(material)
+    {"lbrn2": (filename, text), "svgs": [(filename, text)], "sheets": [{"parts", "minutes", "offcut", "pieces"}],
+    "kept": bool}. previous: text of the project's existing .lbrn2 - if LightBurn saved it, its layers are carried
+    over. Layers belong to the project in LightBurn, so the carry-over covers every page. rest_cuts: a last layer
+    cuts each sheet's rest wood free as rectangles (sheets.rest_pieces)."""
     st = S.sheet_tuple(sheet)
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     sizes = [(p.w, p.h) for p in parts]
-    pages, svgs, info = [], [], []
+    sheets = []
     for n in range(n_sheets):
-        evs = [placed_part(parts[pl["part"]], pl, deco.get(pl["part"], []), comp)
-               for pl in placements if pl["sheet"] == n]
-        G.check_sheet(evs, st, name="sheet %d" % (n + 1))
-        pages.append(("Sheet %d" % (n + 1), evs))
-        svgs.append(("%02d_%s.svg" % (n + 1, slug(name)), svg(evs, st, title)))
-        info.append({"parts": len(evs), "minutes": G.job_time(evs, layers),
-                     "offcut": S.offcut(placements, sizes, sheet, n)})
+        on = [pl for pl in placements if pl["sheet"] == n]
+        evs = [placed_part(parts[pl["part"]], pl, deco.get(pl["part"], []), comp) for pl in on]
+        G.check_sheet(evs, st, name="sheet %d" % (n + 1))     # before the rest-piece cuts: they reach the edges
+        pieces, frame = rest_part(parts, on, sheet, comp) if rest_cuts else ([], None)
+        sheets.append((evs, frame, pieces))
+    key, mat, layers = material_layers(material, frame=any(frame for _, frame, _ in sheets))
+    pages, svgs, info = [], [], []
+    for n, (evs, frame, pieces) in enumerate(sheets):
+        page = evs + ([frame] if frame else [])
+        pages.append(("Sheet %d" % (n + 1), page))
+        svgs.append(("%02d_%s.svg" % (n + 1, slug(name)), svg(page, st, title)))
+        info.append({"parts": len(evs), "minutes": G.job_time(page, layers),
+                     "offcut": S.offcut(placements, sizes, sheet, n),
+                     "pieces": [{"name": p.name, "w": round(p.size[0], 1), "h": round(p.size[1], 1)} for p in pieces]
+                     if frame else [],
+                     "rest": _pieces_txt(pieces) if frame else ""})
+
+    def rest(s):
+        return ("rest pieces: " + s["rest"]) if s["rest"] else "offcut %g x %.0f mm across the top" % (st[0], s["offcut"])
+
     extra = (notes_extra + "\n") if notes_extra else ""
     if n_sheets == 1:
         s = info[0]
         notes = ("%s - 1 sheet.\n"
                  "Parts: %d. Estimated time: %s (rough - LightBurn's Preview has the real number).\n"
-                 "Offcut: a clean strip %g x %.0f mm across the top.\n"
-                 % (title, s["parts"], _time_txt(s["minutes"]), st[0], s["offcut"]))
+                 "%s.\n"
+                 % (title, s["parts"], _time_txt(s["minutes"]), rest(s)[0].upper() + rest(s)[1:]))
     else:
         notes = ("%s - %d sheets, one page each (LightBurn 2.2 or newer). Each page is one sheet: open it with the "
                  "tabs over the workspace or in the Pages panel, then Start - only the page shown is cut.\n"
                  % (title, n_sheets))
-        notes += "".join("Sheet %d: %d part%s, %s, offcut %g x %.0f mm across the top.\n"
-                         % (n + 1, s["parts"], "" if s["parts"] == 1 else "s", _time_txt(s["minutes"]), st[0],
-                            s["offcut"])
+        notes += "".join("Sheet %d: %d part%s, %s, %s.\n"
+                         % (n + 1, s["parts"], "" if s["parts"] == 1 else "s", _time_txt(s["minutes"]), rest(s))
                          for n, s in enumerate(info))
         notes += "Times are rough - LightBurn's Preview has the real number.\n"
+    if any(s["rest"] for s in info):
+        notes += ("The last layer (CUT frame) cuts the rest pieces free once the parts are done. Switch its Output "
+                  "off to keep a sheet whole.\n")
     notes += extra + "After regenerating, reopen this file in LightBurn, or you'll cut the old geometry.\n"
     keep = kept_layers(previous)
     if keep:
@@ -293,10 +330,11 @@ def files_result(proj):
     for (sname, svg), s in zip(proj["svgs"], proj["sheets"]):
         out.append({"name": sname, "kind": "svg", "content": svg, "minutes": s["minutes"], "offcut": s["offcut"]})
     return {"ok": True, "files": out, "kept": proj["kept"],
-            "sheets": [{"minutes": s["minutes"], "offcut": round(s["offcut"], 1)} for s in proj["sheets"]]}
+            "sheets": [{"minutes": s["minutes"], "offcut": round(s["offcut"], 1), "pieces": s["pieces"]}
+                       for s in proj["sheets"]]}
 
 
-SVG_COLOURS = {M.CUT: "#ff0000", M.LINE: "#0000ff", M.FILL: "#000000"}
+SVG_COLOURS = {M.CUT: "#ff0000", M.LINE: "#0000ff", M.FILL: "#000000", S.FRAME_LAYER: "#ff00ff"}
 
 
 def _svg_path(item):
@@ -328,10 +366,10 @@ def _svg_path(item):
 
 
 def svg(evs, sheet, title):
-    """Sheet-sized SVG in mm, Y flipped so it matches LightBurn's view. Red = cut, blue = line engrave.
-    The T1 tool layer is left out: other programs would cut it."""
+    """Sheet-sized SVG in mm, Y flipped so it matches LightBurn's view. Red = cut, blue = line engrave, magenta = the
+    rest-piece cuts (after the parts). The T1 tool layer is left out: other programs would cut it."""
     sw, sh, _ = sheet
-    groups = {M.CUT: [], M.LINE: [], M.FILL: []}
+    groups = {M.CUT: [], M.LINE: [], M.FILL: [], S.FRAME_LAYER: []}
     for e in evs:
         for it in e.items:
             if it[0] in groups:
@@ -340,7 +378,7 @@ def svg(evs, sheet, title):
                     groups[it[0]].append(d)
     body = []
     # engrave layers first, cut last - same order as the LightBurn file
-    for layer, name in ((M.FILL, "FILL"), (M.LINE, "LINE"), (M.CUT, "CUT")):
+    for layer, name in ((M.FILL, "FILL"), (M.LINE, "LINE"), (M.CUT, "CUT"), (S.FRAME_LAYER, "FRAME")):
         if groups[layer]:
             body.append('  <g id="%s" fill="none" stroke="%s" stroke-width="0.1">\n%s\n  </g>'
                         % (name, SVG_COLOURS[layer], "\n".join('    <path d="%s"/>' % d for d in groups[layer])))

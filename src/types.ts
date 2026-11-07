@@ -111,6 +111,7 @@ export interface MaterialProfile {
 export interface Options {
   labels_engrave: boolean;
   mark: { enabled: boolean; text: string | null; part: number | null };
+  rest_cuts: boolean;        // a last layer cuts each sheet's rest wood free (sheets.rest_pieces)
 }
 
 // A saved box (.box.json). Every parameter is stored, not only the changed ones, so a later boxes.py with other

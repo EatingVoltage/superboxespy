@@ -175,6 +175,31 @@ class Parity(unittest.TestCase):
             with self.subTest(case=os.path.basename(path)):
                 self._compare(path)
 
+    def test_rest_pieces(self):
+        """superboxes' rest pieces work for any layout; on stampcaser's own sheets (its grids, its boards) they are
+        stampcaser's pieces, cut by the same lines."""
+        from superboxes import sheets as S
+        cases = [p for p in CASES if os.path.exists(p)] + [None]
+        for path in cases:
+            case = self.old["model"].Case.load(path) if path else None
+            if case is None:     # a small case: two boards to a sheet, with a piece beside them
+                case = self.old["model"].Case.from_dict(sample_case(4).to_dict())
+            for sheet in self.old["build"].sheets_of(self.old["layout"].Layout(case, DAY)):
+                with self.subTest(case=os.path.basename(path or "sample"), sheet=sheet.n):
+                    outlines = [b.outline for b in sheet.boards]
+                    pieces = S.rest_pieces([o.bounds for o in outlines], S.A3, [b.title for b in sheet.boards])
+                    self.assertEqual([p.name for p in pieces], [p.name for p in sheet.pieces])
+                    for p, q in zip(pieces, sheet.pieces):    # edges on the cut outline, not on its nominal box
+                        for a, b in zip(p.rect, q.rect):
+                            self.assertAlmostEqual(a, b, delta=1e-3)
+                    lines = S.frame_lines(pieces, outlines, S.A3)
+                    if sheet.frame is None:
+                        self.assertIsNone(lines)
+                    else:
+                        # within the 0.01 mm where a frame cut meets a board's cut: at a rounded corner, a line a
+                        # micron higher leaves that zone a few microns further along
+                        self.assertLess(_geom_diff(lines, sheet.frame.items[0][2]), 0.01)
+
 
 class Api(unittest.TestCase):
     """The stamp case through superboxes' api, as the page calls it."""

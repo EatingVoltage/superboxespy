@@ -31,7 +31,8 @@ def notes_extra(lay, parts, placements):
     return "\n".join(out)
 
 
-def project_files(lay, parts, placements, sheet, name, material, previous=None):
+def project_files(lay, parts, placements, sheet, name, material, previous=None, rest_cuts=True):
     """export.project_files for a stamp case: one LightBurn project, a page per sheet, plus the SVG sheets."""
     return X.project_files(name, "Stamp case " + (lay.case.project.strip() or name), parts, placements, {}, material,
-                           sheet, notes_extra=notes_extra(lay, parts, placements), previous=previous)
+                           sheet, notes_extra=notes_extra(lay, parts, placements), previous=previous,
+                           rest_cuts=rest_cuts)

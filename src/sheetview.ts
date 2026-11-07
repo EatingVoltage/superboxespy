@@ -67,6 +67,72 @@ export function offcut(parts: PartJ[], placements: Placement[], sheet: Sheet, n:
   return Math.max(0, sheet.h - top - GAP);
 }
 
+// The rest pieces: python/superboxes/sheets.py rest_pieces, which the export cuts. This copy draws them while
+// parts are dragged, from the parts' boxes (the export takes the cut outlines: a fraction of a mm apart).
+const FRAME_MIN_PIECE = 10;
+const FRAME_STEP = 0.5;
+
+export interface RestPiece { name: string; x0: number; y0: number; x1: number; y1: number }
+
+export function restPieces(parts: PartJ[], placements: Placement[], sheet: Sheet, n: number): RestPiece[] {
+  const boxes = placements.filter((pl) => pl.sheet === n).map((pl) => {
+    const [w, h] = rotSize(parts[pl.part], pl.rot);
+    return { x0: pl.x, y0: pl.y, x1: pl.x + w, y1: pl.y + h, name: parts[pl.part].name };
+  });
+  if (!boxes.length) return [];
+  const usable = Math.min(sheet.usable, sheet.h);
+  const top = Math.max(...boxes.map((b) => b.y1));
+  const out: RestPiece[] = [];
+  if (top <= usable - 0.5) out.push({ name: "top rest piece", x0: 0, y0: top, x1: sheet.w, y1: sheet.h });
+  const tops: number[] = [];
+  for (const t of boxes.map((b) => b.y1).sort((a, b) => a - b)) {
+    if (tops.length && t - tops[tops.length - 1] < 1e-3) tops[tops.length - 1] = t;
+    else tops.push(t);
+  }
+  type Band = { y0: number; y1: number; r: number; i: number };
+  const bands: Band[] = [];
+  let y0 = 0;
+  for (const t of tops) {
+    let best = -1;
+    boxes.forEach((b, i) => {
+      if (b.y0 < t - 1e-3 && b.y1 > y0 + 1e-3 &&
+          (best < 0 || b.x1 > boxes[best].x1 || (b.x1 === boxes[best].x1 && b.y1 > boxes[best].y1))) best = i;
+    });
+    if (best < 0) continue;
+    bands.push({ y0, y1: t, r: boxes[best].x1, i: best });
+    y0 = t;
+  }
+  const join = (k: number) => {
+    const a = bands[k], b = bands[k + 1];
+    const r = b.r >= a.r - 1e-9 ? b : a;
+    bands.splice(k, 2, { y0: a.y0, y1: b.y1, r: r.r, i: r.i });
+  };
+  const waste = (k: number) => {
+    const a = bands[k], b = bands[k + 1];
+    const low = a.r < b.r ? a : b;
+    return Math.abs(a.r - b.r) * (low.y1 - low.y0);
+  };
+  for (let k = 0; k + 1 < bands.length;) {
+    if (Math.abs(bands[k].r - bands[k + 1].r) < FRAME_STEP) join(k);
+    else k++;
+  }
+  while (bands.length > 1) {
+    const k = bands.findIndex((b) => b.y1 - b.y0 < FRAME_MIN_PIECE);
+    if (k < 0) break;
+    const near = [k - 1, k].filter((j) => j >= 0 && j < bands.length - 1);
+    join(near.reduce((a, b) => (waste(b) < waste(a) ? b : a)));
+  }
+  bands.forEach((b, k) => {
+    if (sheet.w - b.r >= FRAME_MIN_PIECE && b.y1 - b.y0 >= FRAME_MIN_PIECE && b.y1 <= usable - 0.5) {
+      out.push({ name: k === 0 ? "right rest piece" : `rest piece beside the ${boxes[b.i].name.toLowerCase()}`,
+        x0: b.r, y0: b.y0, x1: sheet.w, y1: b.y1 });
+    }
+  });
+  return out;
+}
+
+const mm = (v: number) => v.toFixed(0);
+
 export interface SheetViewEvents {
   change(placements: Placement[], moved: number[]): void;
   select(part: number | null): void;
@@ -78,6 +144,7 @@ export class SheetView {
   private placements: Placement[] = [];
   private selected: number | null = null;
   private zoom = 1;
+  private rest = true;
 
   constructor(private root: HTMLElement, private ev: SheetViewEvents) {
     root.tabIndex = 0;
@@ -101,9 +168,10 @@ export class SheetView {
     this.ev.select(i);
   }
 
-  show(build: Build, sheet: Sheet, placements: Placement[]) {
+  show(build: Build, sheet: Sheet, placements: Placement[], rest = true) {
     this.build = build;
     this.sheet = sheet;
+    this.rest = rest;
     this.placements = placements.map((p) => ({ ...p }));
     this.fit();
     this.draw();
@@ -130,8 +198,12 @@ export class SheetView {
       card.dataset.sheet = String(k);
       const used = this.placements.filter((p) => p.sheet === k);
       const off = offcut(b.parts, this.placements, sheet, k);
+      const pieces = this.rest ? restPieces(b.parts, this.placements, sheet, k) : [];
       const cap = document.createElement("figcaption");
-      cap.innerHTML = `<b>Sheet ${k + 1}</b><span>${used.length} parts</span><span>offcut ${sheet.w} × ${off.toFixed(0)} mm</span>`;
+      const left = pieces.length
+        ? `rest ${pieces.map((r) => `${mm(r.x1 - r.x0)} × ${mm(r.y1 - r.y0)}`).join(", ")} mm`
+        : `offcut ${sheet.w} × ${off.toFixed(0)} mm`;
+      cap.innerHTML = `<b>Sheet ${k + 1}</b><span>${used.length} part${used.length === 1 ? "" : "s"}</span><span>${left}</span>`;
       const svg = svgEl("svg", { viewBox: `-6 -6 ${sheet.w + 12} ${sheet.h + 12}`, class: "sheet-svg" }) as SVGSVGElement;
       const g = svgEl("g", { transform: `translate(0 ${sheet.h}) scale(1 -1)` }) as SVGGElement;
       g.dataset.frame = "1";
@@ -143,7 +215,27 @@ export class SheetView {
       const [ax0, ay0, ax1, ay1] = area(sheet);
       g.append(svgEl("rect", { x: ax0, y: ay0, width: ax1 - ax0, height: ay1 - ay0, class: "margin" }));
       const top = sheet.h - off;
-      if (off > 5) g.append(svgEl("rect", { x: 0, y: top, width: sheet.w, height: off, class: "offcut" }));
+      if (!pieces.length && off > 5) g.append(svgEl("rect", { x: 0, y: top, width: sheet.w, height: off, class: "offcut" }));
+      for (const r of pieces) {
+        const piece = svgEl("rect", { x: r.x0, y: r.y0, width: r.x1 - r.x0, height: r.y1 - r.y0, class: "rest-piece" });
+        const t = svgEl("title");
+        t.textContent = `${r.name}: ${mm(r.x1 - r.x0)} × ${mm(r.y1 - r.y0)} mm, cut free last (CUT frame)`;
+        piece.append(t);
+        g.append(piece);
+      }
+      const labels = svgEl("g", { class: "rest-labels" });
+      for (const r of pieces) {
+        // the cuts that free it: its edges that aren't the sheet's
+        if (r.y0 > 1e-6) g.append(svgEl("line", { x1: r.x0, y1: r.y0, x2: r.x1, y2: r.y0, class: "frame-cut" }));
+        if (r.y1 < sheet.h - 1e-6) g.append(svgEl("line", { x1: r.x0, y1: r.y1, x2: r.x1, y2: r.y1, class: "frame-cut" }));
+        if (r.x0 > 1e-6) g.append(svgEl("line", { x1: r.x0, y1: r.y0, x2: r.x0, y2: r.y1, class: "frame-cut" }));
+        const w = r.x1 - r.x0, hh = Math.min(r.y1, sheet.usable) - r.y0;
+        if (w >= 34 && hh >= 12) {
+          const label = svgEl("text", { x: (r.x0 + r.x1) / 2, y: sheet.h - (r.y0 + hh / 2), class: "rest-label" });
+          label.textContent = `${mm(w)} × ${mm(r.y1 - r.y0)}`;
+          labels.append(label);
+        }
+      }
       for (const pl of used) {
         const p = b.parts[pl.part];
         const pg = svgEl("g", { class: "part", transform: partTransform(p, pl) }) as SVGGElement;
@@ -165,7 +257,7 @@ export class SheetView {
         pg.addEventListener("pointerdown", (e) => this.drag(e as PointerEvent, pl, pg, g));
         g.append(pg);
       }
-      svg.append(g);
+      svg.append(g, labels);
       svg.addEventListener("pointerdown", (e) => {
         if (!(e.target as Element).closest(".part")) this.select(null);
       });

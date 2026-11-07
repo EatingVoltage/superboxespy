@@ -26,7 +26,7 @@ const S = {
   thicknessOverride: null as number | null,
   kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
-  options: { labels_engrave: false, mark: { enabled: true, text: null, part: null } } as Options,
+  options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true } as Options,
   notes: "",
   build: null as Build | null,
   placements: [] as Placement[],
@@ -190,17 +190,22 @@ function renderStampMaterial(el: HTMLElement, thickness: number) {
 // ------------------------------------------------------------------ output options
 function renderOutput() {
   const el = $("output");
-  el.replaceChildren(h("h3", {}, isStamp() ? "Notes" : "Engraving & notes"));
-  if (isStamp()) {
-    el.append(h("div", { class: "row hint" }, "The maker's mark goes on the top pocket board, next to the logo and the project name."));
-    el.append(notesRow());
-    return;
-  }
+  el.replaceChildren(h("h3", {}, isStamp() ? "Sheets & notes" : "Engraving & notes"));
   const sw = (label: string, checked: boolean, on: (v: boolean) => void, title = "") => {
     const box = h("input", { type: "checkbox", checked, role: "switch" }) as HTMLInputElement;
     box.onchange = () => on(box.checked);
     return h("label", { class: "row bool-row", title }, h("span", {}, label), h("span", { class: "switch" }, box, h("i")));
   };
+  const rest = sw("Cut the rest pieces free", S.options.rest_cuts, (v) => {
+    S.options.rest_cuts = v;
+    changed(true);
+  }, "A last layer (C07, CUT's values) cuts the leftover wood into rectangles once the parts are done. " +
+     "In LightBurn, switch that layer's Output off to keep a sheet whole.");
+  if (isStamp()) {
+    el.append(h("div", { class: "row hint" }, "The maker's mark goes on the top pocket board, next to the logo and the project name."));
+    el.append(rest, notesRow());
+    return;
+  }
   el.append(sw("Maker's mark", S.options.mark.enabled, (v) => {
     S.options.mark.enabled = v;
     changed(true);
@@ -217,7 +222,7 @@ function renderOutput() {
     S.options.labels_engrave = v;
     changed(true);
   }, "Off: labels only on the T1 tool layer (shown, never cut). On: engraved on LINE."));
-  el.append(notesRow());
+  el.append(rest, notesRow());
 }
 
 function notesRow() {
@@ -313,7 +318,7 @@ async function rebuild(final = true) {
     const k = keptBy.get(p.part);
     return k && k.x === p.x && k.y === p.y && k.rot === p.rot && k.sheet === p.sheet;
   }).map((p) => p.part));
-  sheetView.show(b, S.sheet, S.placements);
+  sheetView.show(b, S.sheet, S.placements, S.options.rest_cuts);
   if (isStamp() && b.stampcase) {
     editor.update();
     if ($("params").contains(document.activeElement)) sc.renderCheck($("params"), stampHost, editor);
@@ -514,7 +519,10 @@ async function load(c: BoxConfig, useProfile = false) {
     ? cm.thickness : null;
   S.sheet = c.sheet ?? A3;
   const o = c.options as Partial<Options> | undefined;   // older files may lack fields
-  S.options = { labels_engrave: o?.labels_engrave ?? false, mark: { enabled: true, text: null, part: null, ...(o?.mark ?? {}) } };
+  S.options = {
+    labels_engrave: o?.labels_engrave ?? false, mark: { enabled: true, text: null, part: null, ...(o?.mark ?? {}) },
+    rest_cuts: o?.rest_cuts ?? true,
+  };
   S.notes = c.notes ?? "";
   S.placements = c.layout ?? [];
   S.manual = new Set((c.layout ?? []).map((p) => p.part));
@@ -538,7 +546,7 @@ async function newBox(gen: string, name?: string, params: Record<string, any> = 
     app: "superboxespy", version: 1, name: name ?? gen.toLowerCase(), generator: gen, boxes_version: S.boxesVersion,
     params: { ...defaults(groups), ...params },
     material: { key: S.materialKey, thickness: profile().thickness, fit: S.fit, burn: material().burn },
-    sheet: S.sheet, layout: null, options: { labels_engrave: false, mark: { enabled: true, text: null, part: null } },
+    sheet: S.sheet, layout: null, options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true },
     notes: "", saved: "",
   }, true);
 }
@@ -787,7 +795,7 @@ async function thumbnailBuild(name: string): Promise<Build | null> {
   }
   const r = await py.call<Build>("build", {
     generator: name, params, material: material(), sheet: S.sheet, layout: null,
-    options: { labels_engrave: false, mark: { enabled: true, text: null, part: null } },
+    options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true },
   });
   return r.ok ? r : null;
 }

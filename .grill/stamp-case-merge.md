@@ -59,9 +59,15 @@ and the stamp case in 3D. Not wanted yet: stamp-case boards and box parts on the
   still moves it.
 - LightBurn: superboxes' explicit **Open in LightBurn** replaces stampcaser's open-when-idle build.
 - Gallery tile: a default case of a handful of stamps; at rest exploded, on hover the boards stack and the lid lifts.
+- Rest pieces for any layout (step 4, 2026-11-07): stampcaser's rule made general. The full-width piece above the
+  highest part, then bands from the bottom, each ending at a part's top edge, with a piece right of the parts in it.
+  Bands whose right ends are within 0.5 mm make one piece; a band under 10 mm joins the neighbour that wastes less.
+  Pieces stay square, as stampcaser's did across a board's cut corner, so a cut along an edge with finger notches
+  frees the bits in the notches (the other choice: pieces with teeth, nothing loose). The sheet view keeps a copy of
+  the rule in TypeScript, from the parts' boxes, to follow a drag; a test checks it against Python on every type.
 
 ## Build order
-Steps 1-3 and the conversion (7) done 2026-11-07, with app-wide undo from step 5 and logos through `serve.py`.
+Steps 1-4 and the conversion (7) done 2026-11-07, with app-wide undo from step 5 and logos through `serve.py`.
 1. Python core: stampcaser's model, shapes, layout, pack, magnets, labels into `python/superboxes/stampcase/`; the two
    evlaser copies merged (typeset, textures, svgpath come over); fonttools in Pyodide; the converter; the parity test.
 2. The type end to end: catalog entry, api, sheets, LightBurn export, 3D assembly (explode, lid lift, magnets, stamps).

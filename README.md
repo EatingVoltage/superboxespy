@@ -62,11 +62,17 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
 - **Sheets & 3D tab:** the sheets on the left, the 3D on the right, both following a slider while you drag it.
   Drag the divider (or focus it and use the arrow keys) to share the space; it's remembered. Double-click empty
   space on the sheets, or the 3D, to let that side fill the view; double-click again to split.
-- **Sheets:** parts are packed from the lower left, so what's left is one clean strip across the top (its size
-  is in the sheet caption and in LightBurn's Notes). Drag parts to rearrange them, including onto another sheet.
+- **Sheets:** parts are packed from the lower left, so what's left is mostly one clean piece across the top. Drag
+  parts to rearrange them, including onto another sheet.
   **R** rotates, the arrow keys nudge (Shift = 10 mm), PgUp/PgDn moves a part to another sheet. Anything closer than
   1.5 mm to another part or 3 mm to the edge, or above the 390 mm reach line, turns red and blocks the export.
   **Re-pack** forgets your arrangement. Hand-placed parts stay put when you change sliders, as long as they still fit.
+- **Rest pieces:** the rest wood is cut free as rectangles once the parts are done (on by default; **Cut the rest
+  pieces free** under Engraving & notes). The sheets show each piece with its size and the dashed magenta cuts that
+  free it, and follow while you drag. The cuts carry the parts' own edges out to the sheet's edges: the full width
+  above the highest part (the **top rest piece**), then right of the parts, a piece per step in their right edge.
+  A piece needs 10 mm both ways, and a cut never runs above the reach line. The pieces come off square, so where a
+  part's top or right edge has finger notches, the cut across them frees the small bits of wood in the notches too.
 - **3D:** orbit with the mouse. **Explode** pulls the box apart, **Open lid** / **Pull drawer** / **Lift cover**
   moves what moves. **▶** next to a slider plays it back and forth; **▶ Show assembly** loops: the parts come
   together, the lid opens and closes, the box comes apart again. Grabbing a slider or **⏸** stops where it is.
@@ -147,20 +153,21 @@ page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
 | Colour | Layer | Mode | poplar 3.6 values | Used for |
 |---|---|---|---|---|
 | blue C01 | 2 LINE | Line | 42 % · 133 mm/s | maker's mark, engraved labels, etching from boxes.py |
-| red C02 | 3 CUT | Line | 100 % · 12.5 mm/s, 1 pass, no kerf offset | every cut (boxes.py's outer and inner cuts), runs last |
+| red C02 | 3 CUT | Line | 100 % · 12.5 mm/s, 1 pass, no kerf offset | every cut (boxes.py's outer and inner cuts) |
+| C07 | 4 CUT frame | Line | CUT's values | the rest-piece cuts, run last; switch its Output off to keep a sheet whole |
 | T1 | tool | never output | | sheet outline up to the 390 mm reach (its top edge is the reach line), part labels |
 
 Values come from the eVlaser toolchain (`python/evlaser/machine.py`). Holes are cut before outlines
 (Inner-to-Outer), the origin is the sheet's lower-left corner, **Start From: Absolute Coords**. The project opens
-with a Notes popup giving the box, each sheet's parts, estimated time and offcut size, the fit and where the mark is.
+with a Notes popup giving the box, each sheet's parts, estimated time and rest pieces, the fit and where the mark is.
 
 **Your LightBurn changes survive a re-export.** If LightBurn saved the project (`x.lbrn2`, or its `_backup`), the
 next export into the folder keeps its layer settings and only replaces the geometry. Boxes exported before pages
 have one `01_x.lbrn2` per sheet: their saved layers carry over to the first project, and the export reminds you to
 delete the old files. **Reopen the project in LightBurn after exporting, or you'll cut the old geometry.**
 
-The SVG export stays one file per sheet (`01_<name>.svg`, `02_…`): red cut lines and blue engrave lines on a
-297 × 420 mm page, Y flipped so it matches LightBurn. T1 is left out, because other programs would cut it.
+The SVG export stays one file per sheet (`01_<name>.svg`, `02_…`): red cut lines, blue engrave lines and the
+rest-piece cuts in magenta on a 297 × 420 mm page, Y flipped so it matches LightBurn. T1 is left out, because other programs would cut it.
 
 ## Status and what's next
 
@@ -180,18 +187,19 @@ Done:
   tries every part turned / upright, so it never needs more sheets than stampcaser did), undo / redo for every type,
   logos through `serve.py` (2026-11-07, see `.grill/stamp-case-merge.md`). `tests/test_stampcase.py` checks every
   existing case against stampcaser itself, board by board, kerf included.
+- rest-piece cuts for every type, stampcaser's C07 frame layer made general (2026-11-07): on stampcaser's own sheets
+  they are stampcaser's pieces and cuts; the sheet view's copy of the rule is checked against the export's.
 
 Not placed in 3D yet: Console2's panel springs, back-wall latches and latch clamps (8 small parts). They lie in front
 of the box. ABox's lid parts lie beside the box for the lid styles that have them.
 
 Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
-1. Rest-piece cuts for every type (stampcaser's C07 frame layer: the rest wood falls apart into square rectangles).
-2. Files next to their `.box.json` (`serve.py` writes them) and a double-click on a `.box.json` opens it here.
-3. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints.
-4. Retire stampcaser once a case has been cut from here.
-5. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
+1. Files next to their `.box.json` (`serve.py` writes them) and a double-click on a `.box.json` opens it here.
+2. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints.
+3. Retire stampcaser once a case has been cut from here.
+4. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
    Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).
-6. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
+5. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
 ## For development
 
@@ -210,9 +218,9 @@ python scripts/update_boxes.py [commit]                   # newer boxes.py, then
 | Path | What |
 |---|---|
 | `python/boxes/` | boxes.py, vendored unchanged (`UPSTREAM_COMMIT`) |
-| `python/superboxes/` | `catalog` (types, slider schema), `capture` (runs a generator and keeps each part, its walls' frames and their outlines), `sheets` (packing), `export` (LightBurn/SVG, mark, labels, sheet checks), `assembly` (3D placement, overlap check), `kerf` (per-axis compensation), `calibration`, `traylayout`, `api` (JSON for the worker); `stampcase/` (the stamp case: `model`, `layout`, `pack`, `magnets`, `labels`, `parts` = its boards as parts, `api`) |
+| `python/superboxes/` | `catalog` (types, slider schema), `capture` (runs a generator and keeps each part, its walls' frames and their outlines), `sheets` (packing, rest pieces), `export` (LightBurn/SVG, mark, labels, sheet checks), `assembly` (3D placement, overlap check), `kerf` (per-axis compensation), `calibration`, `traylayout`, `api` (JSON for the worker); `stampcase/` (the stamp case: `model`, `layout`, `pack`, `magnets`, `labels`, `parts` = its boards as parts, `api`) |
 | `python/evlaser/` | copy of the eVlaser toolchain (`lbrn` writer, `machine` values, `geom`); see its `__init__` for the two changes |
-| `src/` | the page: `main` (state, wiring), `worker` + `py` (Pyodide in a web worker), `params` (sliders), `sheetview` (2D), `view3d` (three.js), `calibration`, `config`, `files`, `materials`, `stampcase` (the stamp case's side panel and board editor) |
+| `src/` | the page: `main` (state, wiring), `worker` + `py` (Pyodide in a web worker), `params` (sliders), `sheetview` (2D, with a copy of the rest-piece rule), `view3d` (three.js), `calibration`, `config`, `files`, `materials`, `stampcase` (the stamp case's side panel and board editor) |
 
 How the 3D knows where parts go: `capture` hooks boxes.py while it draws and records a frame per part:
 - **`rectangularWall`:** the wall's callback 0, which fires at its inner corner.

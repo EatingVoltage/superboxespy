@@ -182,7 +182,8 @@ def export(req):
         return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
     name = req.get("name") or (case.project.strip() or "stamp case")
     proj = B.project_files(lay, parts, layout, sheet, name, {"key": C.MATERIAL, "thickness": C.THICKNESS},
-                           previous=req.get("previous"))
+                           previous=req.get("previous"),
+                           rest_cuts=(req.get("options") or {}).get("rest_cuts", True))
     return X.files_result(proj)
 
 

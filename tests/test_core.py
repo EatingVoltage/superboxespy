@@ -2,10 +2,15 @@
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "python"))
+
+import shapely                                       # noqa: E402
 
 from evlaser import machine as M                     # noqa: E402
 from superboxes import api, assembly, calibration, capture, catalog, export as X, sheets as S, traylayout  # noqa: E402
@@ -83,6 +88,85 @@ class Sheets(unittest.TestCase):
         self.assertTrue(all(pl["y"] < 10 for pl in placements))   # one row along the bottom edge
         self.assertGreater(S.offcut(placements, [(p.w, p.h) for p in parts], S.A3, 0), 300)
 
+    def test_rest_pieces_never_touch_a_part(self):
+        """Every type: the rest pieces are clear of the parts and of each other, big enough, and their cuts never run
+        into a part (they may only meet its cut) nor above the reach limit."""
+        sw, sh, usable = S.sheet_tuple(S.A3)
+        for name in catalog.GENERATORS:
+            with self.subTest(name=name):
+                parts, info = capture.render(name, ui_params(name), 3.6, 0.1)
+                placements, _ = S.pack([(p.w, p.h) for p in parts])
+                for n in range(max(pl["sheet"] for pl in placements) + 1):
+                    on = [pl for pl in placements if pl["sheet"] == n]
+                    outlines = [X.placed_shape(parts[pl["part"]], pl) for pl in on]
+                    pieces, frame = X.rest_part(parts, on, S.A3)
+                    self.assertEqual(pieces[0].name, "top rest piece")
+                    boxes = [shapely.box(*p.rect) for p in pieces]
+                    for k, b in enumerate(boxes):
+                        self.assertGreaterEqual(min(pieces[k].size), S.FRAME_MIN_PIECE)
+                        for o in outlines:
+                            self.assertLess(b.intersection(o).area, 1e-6, pieces[k].name)
+                        for c in boxes[k + 1:]:
+                            self.assertLess(b.intersection(c).area, 1e-6)
+                    lines = frame.items[0][2]
+                    for o in outlines:
+                        self.assertLess(lines.intersection(o.buffer(-0.05)).length, 1e-9)
+                    x0, y0, x1, y1 = lines.bounds
+                    self.assertGreaterEqual(x0, -1e-9)
+                    self.assertGreaterEqual(y0, -1e-9)
+                    self.assertLessEqual(x1, sw + S.FRAME_OVERSHOOT + 1e-9)
+                    self.assertLessEqual(y1, usable)
+
+    def test_sheet_view_draws_the_same_rest_pieces(self):
+        """src/sheetview.ts keeps a copy of rest_pieces to draw them while parts are dragged, from the parts' boxes:
+        on every type it finds the pieces the export cuts from the outlines, within half a mm."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("no Node.js")
+        mat = {"key": "poplar3.6", "thickness": 3.7, "kerf_x": 0.33, "kerf_y": 0.26, "burn_x": 0.165, "burn_y": 0.13}
+        cases, want = [], []
+        for name in catalog.GENERATORS:
+            req = {"generator": name, "params": ui_params(name), "material": mat, "options": {}}
+            parts, info = api._render(req)
+            b = api.build(req)
+            sheets = list(range(len(b["sheets"])))
+            cases.append({"parts": [{"name": p["name"], "w": p["w"], "h": p["h"]} for p in b["parts"]],
+                          "placements": b["placements"], "sheet": S.A3, "sheets": sheets})
+            want.append([[[q.name] + list(q.rect) for q in X.rest_part(parts, [pl for pl in b["placements"]
+                                                                              if pl["sheet"] == n], S.A3,
+                                                                        info["comp"])[0]] for n in sheets])
+        with tempfile.TemporaryDirectory() as d:
+            f = os.path.join(d, "cases.json")
+            with open(f, "w", encoding="utf-8") as fh:
+                json.dump(cases, fh)
+            run = subprocess.run([node, "--experimental-transform-types", "--no-warnings",
+                                  os.path.join(os.path.dirname(__file__), "rest_pieces.mjs"), f],
+                                 capture_output=True, text=True, timeout=60,
+                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if run.returncode and "transform-types" in run.stderr:
+            self.skipTest("this Node.js can't run TypeScript")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        got = json.loads(run.stdout)
+        for name, g, w in zip(catalog.GENERATORS, got, want):
+            for n, (gs, ws) in enumerate(zip(g, w)):
+                with self.subTest(name=name, sheet=n + 1):
+                    self.assertEqual([q[0] for q in gs], [q[0] for q in ws])
+                    for q, r in zip(gs, ws):
+                        for u, v in zip(q[1:], r[1:]):
+                            self.assertAlmostEqual(u, v, delta=0.5)
+
+    def test_rest_pieces_of_a_ragged_layout(self):
+        """Parts of three heights side by side: a piece beside each step, a thin band joins its neighbour."""
+        boxes = [(3, 3, 100, 200), (101.5, 3, 150, 125), (151.5, 3, 200, 120)]
+        pieces = S.rest_pieces(boxes, S.A3, ["tall", "middle", "short"])
+        self.assertEqual([(p.name, tuple(round(v, 3) for v in p.rect)) for p in pieces], [
+            ("top rest piece", (0, 200, 297, 420)),
+            ("right rest piece", (200, 0, 297, 125)),     # the 5 mm band over "short" joins the one below
+            ("rest piece beside the tall", (100, 125, 297, 200)),
+        ])
+        # nothing worth cutting: the parts fill the sheet up to the reach limit
+        self.assertEqual(S.rest_pieces([(3, 3, 294, 390)], S.A3), [])
+
     def test_hand_placed_parts_are_kept_when_valid(self):
         req = {"generator": "ABox", "params": ui_params("ABox", x=50, y=50, h=50), "material": MAT}
         b = api.build(req)
@@ -120,14 +204,28 @@ class Export(unittest.TestCase):
         res = api.export(self.req)
         self.assertTrue(res["ok"], res.get("error"))
         lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
-        self.assertEqual(set(re.findall(r'CutIndex="(\d+)"', lb)), {"1", "2", "30"})
-        # CUT runs last: highest priority among output layers
+        self.assertEqual(set(re.findall(r'CutIndex="(\d+)"', lb)), {"1", "2", "7", "30"})
+        # CUT after the engraving, then the rest-piece cuts (C07, CUT's values) last of all
         prios = dict(re.findall(r'<index Value="(\d+)"/>\s*<name Value="[^"]*"/>(?:\s*<\w+ Value="[^"]*"/>)*?\s*<priority Value="(\d+)"/>', lb))
         self.assertGreater(int(prios["2"]), int(prios["1"]))
+        self.assertGreater(int(prios["7"]), int(prios["2"]))
+        self.assertIn('<name Value="4 CUT frame - frees the rest pieces, runs last"/>', lb)
+        self.assertEqual(lb.count('<speed Value="12.5"/>'), 2)
+        self.assertIn("Rest pieces: top rest piece 297 x ", lb)
+        self.assertEqual(res["sheets"][0]["pieces"][0]["name"], "top rest piece")
         self.assertIn('<maxPower Value="100"/>', lb)
         self.assertIn('<speed Value="12.5"/>', lb)
         self.assertIn("Start From: Absolute Coords", lb)
         self.assertIn('Optimize_InnerToOuter Value="1"', lb)
+
+    def test_rest_cuts_can_be_switched_off(self):
+        res = api.export({**self.req, "options": {"rest_cuts": False}})
+        lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
+        self.assertEqual(set(re.findall(r'CutIndex="(\d+)"', lb)), {"1", "2", "30"})
+        self.assertIn('<name Value="3 CUT red - through, runs last"/>', lb)
+        self.assertIn("Offcut 297 x ", lb)
+        self.assertNotIn("frame", lb)
+        self.assertEqual(res["sheets"][0]["pieces"], [])
 
     def test_lightburn_saved_layers_survive_a_rebuild(self):
         first = [f for f in api.export(self.req)["files"] if f["kind"] == "lbrn2"][0]["content"]
@@ -163,8 +261,8 @@ class Export(unittest.TestCase):
         self.assertIn("%d sheets, one page each" % n, lb)
         self.assertEqual(len([f for f in res["files"] if f["kind"] == "svg"]), n)
         self.assertEqual(len(res["sheets"]), n)
-        # every part sits on its page once: one group per part plus the T1 sheet per page
-        self.assertEqual(len(re.findall(r'<Shape Type="Group">', lb)), len(b["parts"]) + n)
+        # every part sits on its page once: one group per part plus the T1 sheet and the rest-piece cuts per page
+        self.assertEqual(len(re.findall(r'<Shape Type="Group">', lb)), len(b["parts"]) + 2 * n)
 
     def test_t1_stays_inside_the_machine_area(self):
         # LightBurn's Select All takes T1 too; anything past the 390 mm reach makes it warn "out of bounds"
@@ -291,7 +389,7 @@ class PerAxisKerf(unittest.TestCase):
         self.assertTrue(res["ok"], res.get("error"))
         lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
         self.assertIn("per axis", lb)
-        self.assertEqual(set(re.findall(r'CutIndex="(\d+)"', lb)), {"1", "2", "30"})
+        self.assertEqual(set(re.findall(r'CutIndex="(\d+)"', lb)), {"1", "2", "7", "30"})
 
     def test_comb_per_axis(self):
         spec = calibration.comb_spec({"kerf": {"x": 0.14, "y": 0.18}})

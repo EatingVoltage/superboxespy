@@ -8,7 +8,8 @@ A request:
                   "burn_x": 0.07, "burn_y": 0.09},   # optional: per-axis burn, see kerf.py
      "sheet": {"name": "A3", "w": 297, "h": 420, "usable": 390},
      "layout": [placement, ...]       # hand-placed parts to keep (build) / the full layout (export)
-     "options": {"labels_engrave": false, "mark": {"enabled": true, "text": null, "part": null}},
+     "options": {"labels_engrave": false, "mark": {"enabled": true, "text": null, "part": null},
+                 "rest_cuts": true},          # a last layer cuts the rest wood free (sheets.rest_pieces)
      "draft": true}                   # build only: a slider is being dragged - the mark keeps its last spot
 """
 import json
@@ -139,7 +140,7 @@ def export(req):
         mark_note = "No maker's mark."
     proj = X.project_files(name, _title(req), parts, layout, deco, mat, sheet,
                            notes_extra="Fit: %s. %s" % (fit, mark_note), previous=req.get("previous"),
-                           comp=info["comp"])
+                           comp=info["comp"], rest_cuts=opts.get("rest_cuts", True))
     return X.files_result(proj)
 
 
