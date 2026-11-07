@@ -19,7 +19,7 @@ once. The **superboxes** entry starts the app without a console window. The serv
 and starting the entry again opens another window on it.
 
 **Pick folder** (top right) once, e.g. `C:\Projects\Laser lightburn`. From then on every export goes to
-`<folder>/<box name>/`: the LightBurn project (one page per sheet), the `.svg` sheets and the box's `.box.json`. The measured material
+`<folder>/<box name>/`: the LightBurn project (one page per sheet), the `.svg` sheets and the box's `.sbox`. The measured material
 values go to `<folder>/materials.json`.
 Chrome and Edge can do this out of the box. **Brave can't until you enable `brave://flags/#file-system-access-api`.**
 Without a folder, files are downloaded instead (several as a zip).
@@ -118,23 +118,26 @@ three times, magnets, the eV cut corner, the hatched lid title) are stampcaser's
 - **Logos** come from `C:\Projects\eating voltage Fonts\logos`, through `serve.py`; they never ship with the app.
   Under `npm run dev` or without that folder a case has no logo.
 - The boards go on the sheets like any box's parts, so you can drag them there too.
-- `scripts/convert_stampcase.py` turned stampcaser's `.stampcase` files into `.box.json` (done once, 2026-11-07).
+- `scripts/convert_stampcase.py` turned stampcaser's `.stampcase` files into box files (done once, 2026-11-07).
 
 ## Saving and sharing
 
-- **Save** (Ctrl+S) writes `<box name>.box.json`. It holds every parameter, not just the changed ones, plus the
+- **A box is a `.sbox` file** (JSON). **Double-click one** to open it here: `scripts/add-to-start-menu.ps1`
+  registers `.sbox` for you, and the box opens in an app window (on the server that's already running, if there is
+  one; `serve.py <file>` does the same). Boxes saved before 2026-11-07 are `.box.json`: they still open and save as
+  `.sbox` (a `.box.json` is a `.json` file to Windows, so a double-click could never reach it).
+- **Save** (Ctrl+S) writes `<box name>.sbox`. It holds every parameter, not just the changed ones, plus the
   material, burn, fit, your sheet arrangement, the mark and your notes, and the boxes.py commit it was made with.
   Opening a box made with another boxes.py version shows a warning: check the parts before cutting.
-- **Open** reads a `.box.json`. **Recent** lists the last 12 saved boxes in this browser.
+- **Open** reads a box. **Recent** lists the last 12 saved boxes in this browser.
 - **A box keeps its files beside it.** Opened with **Open** (Windows' own dialog) or saved with **Save as…**
-  (Ctrl+Shift+S), a box lives where its `.box.json` is: the chip next to its name shows the folder, and **Save**, the
-  exports and **Open in LightBurn** write into that folder (`<name>.box.json`, `<name>.lbrn2`, `NN_<name>.svg`). So
-  `C:\Projects\ELEMENTS SYNTH\hw\packaging\ELEMENTS REV.C PACKAGING.box.json` exports right there. **Recent** reads
-  such a box from its file again. `serve.py` does the reading and writing (a browser never learns full paths): it
-  writes only `.box.json`, `.lbrn2` and `.svg` files beside a `.box.json`, for this PC's own page. New boxes and boxes
+  (Ctrl+Shift+S), or double-clicked, a box lives where its `.sbox` is: the chip next to its name shows the folder,
+  and **Save**, the exports and **Open in LightBurn** write into that folder (`<name>.sbox`, `<name>.lbrn2`,
+  `NN_<name>.svg`). So `C:\Projects\ELEMENTS SYNTH\hw\packaging\ELEMENTS REV.C PACKAGING.sbox` exports right there.
+  **Recent** reads such a box from its file again. `serve.py` does the reading and writing (a browser never learns
+  full paths): it writes only `.sbox`, `.lbrn2` and `.svg` files beside a box, for this PC's own page. New boxes and boxes
   from a share link go to the picked folder, `<folder>/<box name>/`, as before. Under `npm run dev` there's no
   `serve.py`, so Open is the browser's and everything goes to the picked folder.
-- `serve.py <file.box.json>` opens that box in an app window (on the server that's already running, if there is one).
 - **Share link** copies a link that holds the whole box (compressed into the URL).
 - A box opened with other material values than your current profile keeps its own values and says so, with a
   button to switch to the profile.
@@ -150,7 +153,7 @@ page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
 `00_calibration/`.
 
 - **Export as LightBurn** writes the project (beside the box's own file, or with a folder: into
-  `<folder>/<box name>/`, plus the `.box.json`).
+  `<folder>/<box name>/`, plus the `.sbox`).
 - **Open in LightBurn** does the same, then opens the project in LightBurn. It needs a picked folder (it asks for
   one if there isn't one yet) and the app started from `start.bat` or the Start menu entry, because `serve.py` starts
   LightBurn: a browser can't. The browser also never learns the folder's full path, only its name, so `serve.py`
@@ -199,20 +202,19 @@ Done:
   existing case against stampcaser itself, board by board, kerf included.
 - rest-piece cuts for every type, stampcaser's C07 frame layer made general (2026-11-07): on stampcaser's own sheets
   they are stampcaser's pieces and cuts; the sheet view's copy of the rule is checked against the export's.
-- a box keeps its files beside its own `.box.json`: Open and Save as… are Windows' dialogs through `serve.py`, which
-  reads and writes there (2026-11-07). `tests/test_serve.py` runs the real dialogs on a desktop that's never shown.
+- a box keeps its files beside its own file, a `.sbox` that opens with a double-click: Open and Save as… are
+  Windows' dialogs through `serve.py`, which reads and writes there (2026-11-07). `tests/test_serve.py` runs the real
+  dialogs on a desktop that's never shown.
 
 Not placed in 3D yet: Console2's panel springs, back-wall latches and latch clamps (8 small parts). They lie in front
 of the box. ABox's lid parts lie beside the box for the lid styles that have them.
 
 Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
-1. A double-click on a `.box.json` opens it here (`serve.py <file>` already does; Windows goes by the last
-   extension only, so it needs a choice about `.json` files, see `.grill/stamp-case-merge.md`).
-2. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints.
-3. Retire stampcaser once a case has been cut from here.
-4. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
+1. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints.
+2. Retire stampcaser once a case has been cut from here.
+3. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
    Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).
-5. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
+4. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
 ## For development
 

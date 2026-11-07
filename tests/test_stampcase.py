@@ -114,7 +114,7 @@ class Port(unittest.TestCase):
             with self.subTest(case=k, board=(round(w), round(h))):
                 self.assertLessEqual(max(x["sheet"] for x in pl) + 1, len(SH.arrange(w, h, len(parts))))
 
-    def test_box_json_round_trip(self):
+    def test_box_file_round_trip(self):
         import convert_stampcase as CV
         case = sample_case(4)
         cfg = CV.box_config(case, "test set", "test set.stampcase", DAY)

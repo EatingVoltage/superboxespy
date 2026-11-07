@@ -2,7 +2,7 @@
 // brave://flags/#file-system-access-api on) everything is written straight into it:
 //   <folder>/<box name>/<box name>.lbrn2           the LightBurn project, one page per sheet
 //   <folder>/<box name>/NN_<box name>.svg          the sheets as SVG
-//   <folder>/<box name>/<box name>.box.json         the box
+//   <folder>/<box name>/<box name>.sbox             the box (JSON; boxes saved before 2026-11-07 are .box.json)
 //   <folder>/materials.json                         thickness, kerf and fits per material
 // Without one, files are downloaded (several at once as a zip).
 
@@ -239,7 +239,7 @@ export function openFile(accept: string): Promise<{ name: string; text: string }
 }
 
 // ------------------------------------------------------------------ a box beside its own file
-// A box opened or saved through serve.py (Open..., Save as..., a .box.json handed to serve.py) keeps its full path,
+// A box opened or saved through serve.py (Open..., Save as..., a .sbox handed to serve.py) keeps its full path,
 // its home: Save and the exports write beside it (.grill/stamp-case-merge.md). Only serve.py knows full paths, so it
 // reads and writes there and shows Windows' own Open / Save As dialogs. Without serve.py (npm run dev) boxes go to the
 // picked folder as before.
@@ -272,9 +272,12 @@ export function canUseHome(): Promise<boolean> {
 
 export const dirOf = (path: string) => path.replace(/[\\/][^\\/]*$/, "");
 export const fileOf = (path: string) => path.replace(/^.*[\\/]/, "");
-export const boxNameOf = (path: string) => fileOf(path).replace(/\.box\.json$/i, "");
+export const boxNameOf = (path: string) => fileOf(path).replace(/\.(sbox|box\.json)$/i, "");
 /** Where the box goes when it's saved as `name` beside `home`. */
-export const homeFor = (home: string, name: string) => `${dirOf(home)}\\${safeName(name)}.box.json`;
+export const homeFor = (home: string, name: string) => `${dirOf(home)}\\${safeName(name)}${BOX_EXT}`;
+/** A box file: its own extension, so a double-click can open it (Windows goes by the last extension only). Boxes
+ *  saved before 2026-11-07 are .box.json: they still open, and save as .sbox. */
+export const BOX_EXT = ".sbox";
 
 /** The picked folder's full path, if Open in LightBurn ever found it. */
 export function folderPath(): string | null {
@@ -297,7 +300,7 @@ export async function askOpen(start: string | null): Promise<HomeRead> {
   return asRead(await boxCall({ op: "ask_open", start }));
 }
 
-/** Windows' Save As dialog, starting in `start` with `name` filled in: the .box.json path picked. */
+/** Windows' Save As dialog, starting in `start` with `name` filled in: the .sbox path picked. */
 export async function askSaveAs(name: string, start: string | null):
     Promise<{ ok: true; path: string } | { ok: false; error?: string; cancelled?: boolean }> {
   const r = await boxCall({ op: "ask_save", name, start });

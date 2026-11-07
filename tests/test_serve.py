@@ -83,13 +83,13 @@ class OpenInLightBurn(unittest.TestCase):
 
 
 class BoxBesideItsFile(unittest.TestCase):
-    """POST /api/box: a box opened or saved anywhere reads and writes beside its own .box.json, nowhere else."""
+    """POST /api/box: a box opened or saved anywhere reads and writes beside its own .sbox file, nowhere else."""
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = os.path.join(self.tmp.name, "hw", "packaging")
         os.makedirs(self.dir)
-        self.home = os.path.join(self.dir, "CASE.box.json")
+        self.home = os.path.join(self.dir, "CASE.sbox")
         with open(self.home, "w", encoding="utf-8") as f:
             f.write('{"name": "CASE"}')
         self.asked = []
@@ -106,27 +106,27 @@ class BoxBesideItsFile(unittest.TestCase):
     def test_reads_a_box(self):
         r = self.op(op="read", path=self.home)
         self.assertEqual((r["path"], r["text"]), (self.home, '{"name": "CASE"}'))
-        for bad in ("CASE.box.json", os.path.join(self.dir, "notes.txt"),
-                    os.path.join(self.tmp.name, "no", "x.box.json")):
+        for bad in ("CASE.sbox", os.path.join(self.dir, "notes.txt"), os.path.join(self.dir, "x.json"),
+                    os.path.join(self.tmp.name, "no", "x.sbox")):
             with self.subTest(path=bad), self.assertRaises(ValueError):
                 self.op(op="read", path=bad)
 
     def test_writes_beside_the_box_only(self):
         files = [{"name": "CASE.lbrn2", "content": "<x/>\n"}, {"name": "01_CASE.svg", "content": "<svg/>"},
-                 {"name": "CASE.box.json", "content": "{}"}]
+                 {"name": "CASE.sbox", "content": "{}"}]
         r = self.op(op="write", home=self.home, files=files)
         self.assertEqual(r["dir"], self.dir)
         with open(os.path.join(self.dir, "CASE.lbrn2"), "rb") as f:
             self.assertEqual(f.read(), b"<x/>\n")              # as the page wrote it: no CRLF
         self.assertEqual(sorted(self.op(op="list", home=self.home)["names"]),
-                         ["01_CASE.svg", "CASE.box.json", "CASE.lbrn2"])
+                         ["01_CASE.svg", "CASE.lbrn2", "CASE.sbox"])
         self.assertEqual(self.op(op="read_beside", home=self.home, name="CASE.lbrn2")["text"], "<x/>\n")
         self.assertIsNone(self.op(op="read_beside", home=self.home, name="other.lbrn2")["text"])
-        for name in ("..\\evil.lbrn2", "../evil.svg", "C:evil.svg", "evil.exe", "evil.bat", "", None):
+        for name in ("..\\evil.lbrn2", "../evil.svg", "C:evil.svg", "evil.exe", "evil.bat", "x.box.json", "", None):
             with self.subTest(name=name), self.assertRaises(ValueError):
                 self.op(op="write", home=self.home, files=[{"name": name, "content": "x"}])
         with self.assertRaises(ValueError):
-            self.op(op="read_beside", home=self.home, name="CASE.box.json")    # only LightBurn's own files
+            self.op(op="read_beside", home=self.home, name="CASE.sbox")        # only LightBurn's own files
         with self.assertRaises(ValueError):
             self.op(op="write", home=os.path.join(self.dir, "x.txt"), files=files)
         # a bad name anywhere in the list: nothing is written
@@ -140,12 +140,21 @@ class BoxBesideItsFile(unittest.TestCase):
         self.assertEqual((r["path"], r["text"]), (self.home, '{"name": "CASE"}'))
         self.assertEqual(self.asked[-1], ("open", None, self.dir))
         self.assertEqual(self.op(answer=None, op="ask_open")["cancelled"], True)
-        for typed, got in (("NEW", "NEW.box.json"), ("NEW.json", "NEW.box.json"), ("NEW.box.json", "NEW.box.json")):
-            r = self.op(answer=os.path.join(self.dir, typed), op="ask_save", name="CASE.box.json", start=self.dir)
+        for typed, got in (("NEW", "NEW.sbox"), ("NEW.json", "NEW.sbox"), ("NEW.box.json", "NEW.sbox"),
+                           ("NEW.sbox", "NEW.sbox")):
+            r = self.op(answer=os.path.join(self.dir, typed), op="ask_save", name="CASE.sbox", start=self.dir)
             self.assertEqual(r["path"], os.path.join(self.dir, got))
-        self.assertEqual(self.asked[-1], ("save", "CASE.box.json", self.dir))
-        self.op(answer=None, op="ask_save", name="../x.box.json", start=os.path.join(self.dir, "gone"))
+        self.assertEqual(self.asked[-1], ("save", "CASE.sbox", self.dir))
+        self.op(answer=None, op="ask_save", name="../x.sbox", start=os.path.join(self.dir, "gone"))
         self.assertEqual(self.asked[-1], ("save", None, None))  # no paths in the name, no folder that isn't there
+
+    def test_an_older_box_json_still_opens_and_saves_as_sbox(self):
+        old = os.path.join(self.dir, "OLD.box.json")
+        with open(old, "w", encoding="utf-8") as f:
+            f.write("{}")
+        self.assertEqual(self.op(op="read", path=old)["text"], "{}")
+        self.op(op="write", home=old, files=[{"name": "OLD.sbox", "content": "{}"}])
+        self.assertTrue(os.path.isfile(os.path.join(self.dir, "OLD.sbox")))
 
     def test_the_launcher_hands_a_file_to_the_page(self):
         self.assertEqual(serve.open_hash(None), "")
@@ -216,14 +225,14 @@ class FileDialog(unittest.TestCase):
 
     def test_save_as_starts_in_the_boxs_folder(self):
         with tempfile.TemporaryDirectory() as d:
-            self.assertEqual(self.run_dialog("save", "CASE.box.json", d, 1), os.path.join(d, "CASE.box.json"))
+            self.assertEqual(self.run_dialog("save", "CASE.sbox", d, 1), os.path.join(d, "CASE.sbox"))
 
     def test_open_starts_in_the_boxs_folder_and_cancels(self):
         with tempfile.TemporaryDirectory() as d:
-            box = os.path.join(d, "CASE.box.json")
+            box = os.path.join(d, "CASE.sbox")
             with open(box, "w") as f:
                 f.write("{}")
-            self.assertEqual(self.run_dialog("open", "CASE.box.json", d, 1), box)
+            self.assertEqual(self.run_dialog("open", "CASE.sbox", d, 1), box)
             self.assertIsNone(self.run_dialog("open", None, d, 2))
 
 

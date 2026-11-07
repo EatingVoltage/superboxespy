@@ -49,7 +49,7 @@ export interface Pocket {
 }
 export interface Block { x: number; y: number; size: number; rot: number; placed: boolean }
 export type BlockKey = "top_block" | "lid_title" | "lid_logo";
-/** A stamp case: the .box.json's params for generator "StampCase" (model.Case). */
+/** A stamp case: a box file's params for generator "StampCase" (model.Case). */
 export interface Case {
   project: string; pocket_boards: number; air: number; logo: string;
   pockets: Pocket[]; magnets: [number, number][]; magnets_auto: boolean;
@@ -114,7 +114,7 @@ export interface Options {
   rest_cuts: boolean;        // a last layer cuts each sheet's rest wood free (sheets.rest_pieces)
 }
 
-// A saved box (.box.json). Every parameter is stored, not only the changed ones, so a later boxes.py with other
+// A saved box (.sbox, JSON; .box.json before 2026-11-07). Every parameter is stored, not only the changed ones, so a later boxes.py with other
 // defaults still makes the same box.
 export interface BoxConfig {
   app: "superboxespy";

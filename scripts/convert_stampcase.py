@@ -1,9 +1,10 @@
-"""Convert stampcaser's .stampcase files into superboxes .box.json files, once (.grill/stamp-case-merge.md).
+"""Convert stampcaser's .stampcase files into superboxes box files (.sbox), once (.grill/stamp-case-merge.md).
 
     .venv/Scripts/python scripts/convert_stampcase.py FILE.stampcase [...] [--force]
 
-Writes <name>.box.json next to each file and leaves the .stampcase alone (stampcaser keeps working until the parity
-test passes). An existing .box.json is only replaced with --force.
+Writes <name>.sbox next to each file and leaves the .stampcase alone (stampcaser keeps working until the parity
+test passes). An existing .sbox is only replaced with --force. (Run on 2026-11-07, when boxes were still .box.json:
+those three files were renamed to .sbox the same day.)
 """
 import argparse
 import datetime
@@ -19,7 +20,7 @@ from superboxes.stampcase import GENERATOR, config as C, model  # noqa: E402
 
 
 def box_config(case, name, source, today=None):
-    """The .box.json dict for a stamp case. params = the case itself (model.Case.to_dict without its version)."""
+    """The box file's dict for a stamp case. params = the case itself (model.Case.to_dict without its version)."""
     params = case.to_dict()
     params.pop("version", None)
     today = today or datetime.date.today()
@@ -41,7 +42,7 @@ def box_config(case, name, source, today=None):
 
 def convert(path, force=False):
     stem = os.path.splitext(os.path.basename(path))[0]
-    out = os.path.join(os.path.dirname(os.path.abspath(path)), stem + ".box.json")
+    out = os.path.join(os.path.dirname(os.path.abspath(path)), stem + ".sbox")
     if os.path.exists(out) and not force:
         raise FileExistsError("%s exists (use --force to replace it)" % out)
     case = model.Case.load(path)

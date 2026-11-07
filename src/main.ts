@@ -26,7 +26,7 @@ const S = {
   thicknessOverride: null as number | null,
   kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
-  home: null as string | null,   // the box's own .box.json on disk (serve.py): Save and the exports go beside it
+  home: null as string | null,   // the box's own file on disk (serve.py): Save and the exports go beside it
   options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true } as Options,
   notes: "",
   build: null as Build | null,
@@ -558,7 +558,7 @@ async function saveBox() {
   const c = config();
   const name = files.safeName(S.name);
   if (S.home) {                    // beside its own file, wherever that is
-    const r = await files.writeBeside(S.home, [{ name: `${name}.box.json`, content: cfg.toJSON(c) }]);
+    const r = await files.writeBeside(S.home, [{ name: name + files.BOX_EXT, content: cfg.toJSON(c) }]);
     if (!r.ok) {
       toast(`Couldn't save beside ${S.home}: ${r.error}`, true, 9000);
       return;
@@ -570,7 +570,7 @@ async function saveBox() {
     toast(`Saved ${S.home}.`);
     return;
   }
-  const where = await files.save(name, `${name}.box.json`, [{ name: `${name}.box.json`, content: cfg.toJSON(c) }]);
+  const where = await files.save(name, name + files.BOX_EXT, [{ name: name + files.BOX_EXT, content: cfg.toJSON(c) }]);
   cfg.remember(c);
   S.dirty = false;
   toast(`${where}.`);
@@ -583,7 +583,7 @@ async function saveAs() {
     return;
   }
   const start = S.home ? files.dirOf(S.home) : files.folderPath();
-  const r = await files.askSaveAs(`${files.safeName(S.name)}.box.json`, start);
+  const r = await files.askSaveAs(files.safeName(S.name) + files.BOX_EXT, start);
   if (!r.ok) {
     if (!r.cancelled) toast(`Not saved: ${r.error}`, true, 9000);
     return;
@@ -601,7 +601,7 @@ async function openBox() {
     else if (!r.cancelled) toast(`Couldn't open it: ${r.error}`, true, 9000);
     return;
   }
-  const f = await files.openFile(".json,application/json");
+  const f = await files.openFile(".sbox,.json,application/json");
   if (!f) return;
   try {
     await load(cfg.parse(f.text));
@@ -612,7 +612,7 @@ async function openBox() {
   }
 }
 
-/** Open the .box.json at `path` (read through serve.py unless `text` is given): it keeps its files beside it. */
+/** Open the box file at `path` (read through serve.py unless `text` is given): it keeps its files beside it. */
 async function openHome(path: string, text?: string): Promise<boolean> {
   if (text == null) {
     const r = await files.readHome(path);
@@ -706,7 +706,7 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
   }
   const out = r.files.filter((f) => f.kind === kind)
     .map((f) => ({ ...f, name: f.kind === "lbrn2" ? `${name}.lbrn2` : f.name.replace(/^(\d\d)_[^.]*/, `$1_${name}`) }));
-  const withBox = place ? [...out, { name: `${name}.box.json`, content: cfg.toJSON(config()) }] : out;
+  const withBox = place ? [...out, { name: name + files.BOX_EXT, content: cfg.toJSON(config()) }] : out;
   let where: string;
   if (place) {
     const dir = await place.write(withBox);
@@ -949,7 +949,12 @@ function wire() {
       label: `${r.name} · ${r.generator} · ${r.saved ? new Date(r.saved).toLocaleDateString() : ""}`,
       run: async () => {
         // a box with a file of its own is read from there: it may have changed since
-        if (r.home && (await files.canUseHome()) && (await openHome(r.home))) return;
+        if (r.home && (await files.canUseHome())) {
+          // boxes saved before 2026-11-07 were .box.json; renamed to .sbox since
+          const sbox = r.home.replace(/\.box\.json$/i, files.BOX_EXT);
+          if (sbox !== r.home && (await files.readHome(sbox)).ok && (await openHome(sbox))) return;
+          if (await openHome(r.home)) return;
+        }
         await load(r.config);
       },
     })), "No saved boxes yet");
@@ -1001,7 +1006,7 @@ function wire() {
 
 async function openFromHash(): Promise<boolean> {
   const m = location.hash.match(/^#open=(.+)$/);
-  if (m) {                         // serve.py handed over a .box.json: double-click, or the Start menu entry
+  if (m) {                         // serve.py handed over a box file: a double-clicked .sbox
     history.replaceState(null, "", location.pathname + location.search);
     const path = decodeURIComponent(m[1]);
     if (S.dirty && !confirm(`Open ${path}? Unsaved changes to this box are lost.`)) return false;

@@ -1,4 +1,4 @@
-// .box.json configs, share links (the whole config in the URL hash) and the "recent boxes" list.
+// .sbox box files (JSON), share links (the whole config in the URL hash) and the "recent boxes" list.
 
 import type { BoxConfig } from "./types";
 
@@ -46,7 +46,7 @@ export async function fromHash(): Promise<BoxConfig | null> {
   }
 }
 
-/** A recently saved or opened box; home: its .box.json on disk, when serve.py knows it (read again from there). */
+/** A recently saved or opened box; home: its file on disk, when serve.py knows it (read again from there). */
 export interface RecentEntry { name: string; generator: string; saved: string; config: BoxConfig; home?: string | null }
 
 export function recent(): RecentEntry[] {

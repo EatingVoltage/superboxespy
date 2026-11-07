@@ -1,14 +1,15 @@
 """Serve the built app (dist/) on localhost and open it.
 
-    python serve.py [--port 5198] [--browser chrome|edge|default|none] [file.box.json]
+    python serve.py [--port 5198] [--browser chrome|edge|default|none] [file.sbox]
 
 Standard library only. Binds to 127.0.0.1, so nothing is reachable from the network. Chrome or Edge open it as an
 app window: both can write straight into a folder (File System Access); Brave needs
 brave://flags/#file-system-access-api for that.
 
 POST /api/open-lightburn opens a project the page just wrote in LightBurn (see open_in_lightburn). POST /api/box reads
-and writes a box beside its own .box.json, and shows Windows' Open / Save As dialogs for it (see box_op). A file given
-on the command line opens in an app window, on the server already running if there is one.
+and writes a box beside its own .sbox file, and shows Windows' Open / Save As dialogs for it (see box_op). A file
+given on the command line (a double-clicked .sbox) opens in an app window, on the server already running if there is
+one.
 """
 import argparse
 import functools
@@ -379,18 +380,23 @@ def open_in_lightburn(req, launch=None):
 
 
 # ------------------------------------------------------------------ a box beside its own file
-# A box opened or saved anywhere (Open..., Save as..., a .box.json given to serve.py) keeps its full path: Save and the
+# A box opened or saved anywhere (Open..., Save as..., a .sbox given to serve.py) keeps its full path: Save and the
 # exports write beside it (.grill/stamp-case-merge.md). A browser never learns full paths, so serve.py reads and writes
 # there, and Open... / Save as... are Windows' own file dialogs, which serve.py shows over the app window.
-BESIDE = (".box.json", ".lbrn2", ".svg")      # what may be written beside a box
+# A box is a .sbox file (JSON): an extension of its own, so a double-click can open it (Windows goes by the last
+# extension, and .box.json is a .json to it). Boxes saved before 2026-11-07 are .box.json: they still open, and save
+# as .sbox.
+BOX_EXT, OLD_BOX_EXT = ".sbox", ".box.json"
+BESIDE = (BOX_EXT, ".lbrn2", ".svg")          # what may be written beside a box
 _dialog = threading.Lock()
 
 
 def box_path(p):
-    """p, normalised, when it's the full path of a .box.json in a folder that exists; else ValueError."""
-    if not (isinstance(p, str) and os.path.isabs(p) and p.lower().endswith(".box.json")
+    """p, normalised, when it's the full path of a box (.sbox, or an older .box.json) in a folder that exists; else
+    ValueError."""
+    if not (isinstance(p, str) and os.path.isabs(p) and p.lower().endswith((BOX_EXT, OLD_BOX_EXT))
             and os.path.isdir(os.path.dirname(p))):
-        raise ValueError("not a .box.json in a folder: %r" % (p,))
+        raise ValueError("not a box file in a folder: %r" % (p,))
     return os.path.normpath(p)
 
 
@@ -412,7 +418,7 @@ def write_text(path, content):
 def box_op(req, ask=None):
     """POST /api/box. {"op": "hello"} | {"op": "read", "path"} -> {"path", "text"} |
     {"op": "ask_open", "start"} -> the same, for the file picked in the Open dialog |
-    {"op": "ask_save", "name", "start"} -> {"path"} picked in the Save As dialog (always a .box.json) |
+    {"op": "ask_save", "name", "start"} -> {"path"} picked in the Save As dialog (always a .sbox) |
     {"op": "list", "home"} -> {"dir", "names"} of the box's folder |
     {"op": "read_beside", "home", "name"} -> {"text", "mtime"} of a .lbrn2 beside it, text None if there's none |
     {"op": "write", "home", "files": [{"name", "content"}]} -> {"dir"}.
@@ -433,8 +439,8 @@ def box_op(req, ask=None):
             return {"ok": False, "cancelled": True}
         if op == "ask_open":
             return box_op({"op": "read", "path": path})
-        if not path.lower().endswith(".box.json"):        # "abox" or "abox.json" typed: still a box
-            path = re.sub(r"(?i)\.json$", "", path) + ".box.json"
+        if not path.lower().endswith(BOX_EXT):            # "abox", "abox.json", "abox.box.json" typed: a .sbox
+            path = re.sub(r"(?i)(\.box)?\.json$", "", path) + BOX_EXT
         return {"ok": True, "path": box_path(path)}
     if op == "list":
         d = os.path.dirname(box_path(req.get("home")))
@@ -492,7 +498,7 @@ DIALOG_GUID = "{6B1E6F5A-2C1D-4B8E-9D3A-5F0C2E7A9B41}"   # superboxes' own last 
 
 
 def ask_path(kind, name=None, start=None, owner=None):
-    """Windows' Open ("open") or Save As ("save") dialog for a .box.json, starting in folder `start` with `name` in the
+    """Windows' Open ("open") or Save As ("save") dialog for a box, starting in folder `start` with `name` in the
     file box: the full path picked, or None. It is owned by the app window (or `owner`), so it opens over it and keeps
     it waiting, like the browser's own dialogs. SUPERBOXES_DIALOG, when set, answers instead without a dialog: a path,
     or empty for Cancel (headless tests)."""
@@ -532,7 +538,7 @@ def ask_path(kind, name=None, start=None, owner=None):
                       if kind == "open" else
                       ("{C0B4E2F3-BA21-4773-8DBA-335EC946EB8B}", "{84bccd23-5fde-4cdb-aea4-af64b83d78ab}"))
         check(ole32.CoCreateInstance(guid(clsid), None, 1, guid(iid), ctypes.byref(dialog)), "CoCreateInstance")
-        specs = (Spec * 2)(Spec("Boxes (*.box.json)", "*.box.json"), Spec("All files (*.*)", "*.*"))
+        specs = (Spec * 2)(Spec("Boxes (*.sbox, *.box.json)", "*.sbox;*.box.json"), Spec("All files (*.*)", "*.*"))
         check(call(dialog, 4, 2, specs, types=(W.UINT, ctypes.c_void_p)), "SetFileTypes")
         opts = W.DWORD()
         check(call(dialog, 10, ctypes.byref(opts), types=(ctypes.c_void_p,)), "GetOptions")
@@ -587,7 +593,7 @@ def open_app(url, which):
 
 
 def open_hash(file):
-    """The page's #open=<full path> for a .box.json given on the command line ("" without one): the page reads it
+    """The page's #open=<full path> for a box given on the command line ("" without one): the page reads it
     through /api/box and saves beside it."""
     if not file:
         return ""
@@ -608,7 +614,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=5198)
     ap.add_argument("--browser", default="auto", choices=["auto", "chrome", "edge", "default", "none"])
-    ap.add_argument("file", nargs="?", help="a .box.json to open")
+    ap.add_argument("file", nargs="?", help="a .sbox (or an older .box.json) to open")
     a = ap.parse_args()
     if not os.path.isfile(os.path.join(DIST, "index.html")):
         sys.exit("No build found. Run once:  npm install  &&  npm run setup  &&  npm run build")
