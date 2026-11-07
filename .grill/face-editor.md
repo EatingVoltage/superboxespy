@@ -65,7 +65,12 @@ kit; the process is discussed along the way, not settled up front.
 ## Open questions
 - The test cut: the lid alone (Cut Selected Graphics in LightBurn) or the whole CANVAS box (about two sheets).
 - How big the logo and title look best on a 248 x 178 lid, and whether the title reads better outlined or hatched:
-  the test cut decides.
+  the test cut decides. Files ready: `C:\Projects\Laser lightburn\CANVAS STARTER KIT\` (`.sbox` and `.lbrn2`; the
+  lid is on sheet 1, ~6.6 min, 0.7 of it engraving; burn X 0.185 / Y 0.15, the measured profile).
+- What tells the cut lid is right (proposed 2026-11-07, not yet answered): the title reads cleanly from arm's length,
+  the 0.8 mm crosshatch is even without scorching or cutting in, the logo's double lines stay apart, nothing reaches
+  the finger joints. What's off gets fixed in the editor (hatch spacing, outline instead of hatch, sizes) before the
+  walls.
 
 ## Out of scope (for now)
 - Inside faces and two-sided jobs.
