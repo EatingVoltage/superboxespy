@@ -258,11 +258,11 @@ def _group_xml(items, indent, attrs=""):
 
 
 def _sheet_xml(parts, sheet, ref_layer, indent):
-    """The T1 reference (sheet outline, reach limit line) and one group per part."""
+    """The T1 reference and one group per part. T1 outlines the sheet only up to the reach limit (its top edge is the
+    limit): LightBurn counts T1 in Select All, and anything past the machine area makes it ask "Cut might be out of
+    bounds" before every job (seen 2026-11-07 with Cut Selected Graphics on, which needs a selection to run)."""
     sw, sh, usable = sheet
-    ref = [(ref_layer, "poly", box(0, 0, sw, sh))]
-    if usable < sh:
-        ref.append((ref_layer, "lines", LineString([(0, usable), (sw, usable)])))
+    ref = [(ref_layer, "poly", box(0, 0, sw, min(usable, sh)))]
     inner = indent + " " * 8
     return "".join(_group_xml([_item_xml(it, inner) for it in items], indent)
                    for items in [ref] + [p.items for p in parts])
@@ -351,7 +351,7 @@ def saved_layers_text(xml):
 def common_notes(material_label, sheet, extra=""):
     """The block every sheet's Notes popup ends with."""
     sw, sh, usable = sheet
-    limit = ("T1 (not output) shows the sheet and the %g mm reach limit." % usable) if usable < sh \
+    limit = ("T1 (not output) outlines the sheet up to the %g mm reach limit (its top edge)." % usable) if usable < sh \
         else "T1 (not output) shows the sheet."
     return ("Material: %s.\n"
             "Layers: black = FILL, blue = LINE, red = CUT. Run order is top to bottom; CUT always last.\n"

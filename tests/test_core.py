@@ -166,6 +166,15 @@ class Export(unittest.TestCase):
         # every part sits on its page once: one group per part plus the T1 sheet per page
         self.assertEqual(len(re.findall(r'<Shape Type="Group">', lb)), len(b["parts"]) + n)
 
+    def test_t1_stays_inside_the_machine_area(self):
+        # LightBurn's Select All takes T1 too; anything past the 390 mm reach makes it warn "out of bounds"
+        lb = [f for f in api.export(self.req)["files"] if f["kind"] == "lbrn2"][0]["content"]
+        ys = [float(y) for verts in re.findall(r'CutIndex="30"[^>]*>\s*<XForm>[^<]*</XForm>\s*<VertList>([^<]*)', lb)
+              for y in re.findall(r"V-?[\d.]+ (-?[\d.]+)", verts)]
+        self.assertTrue(ys)
+        self.assertLessEqual(max(ys), 390.0)
+        self.assertNotIn("V297 420", lb)
+
     def test_svg_has_no_tool_layer(self):
         res = api.export(self.req)
         svg = [f for f in res["files"] if f["kind"] == "svg"][0]["content"]

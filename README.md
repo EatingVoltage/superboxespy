@@ -111,14 +111,14 @@ page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
   looks for a folder by that name in your home folder and near the top of each fixed drive (e.g.
   `C:\Projects\Laser lightburn`). It opens the file only if it's byte for byte the one just written. If it can't
   find the folder, the app asks for its path once and remembers it. LightBurn comes to the front once its window is
-  up, but only if the superboxes window still has focus by then. LightBurn runs several copies side by side, so with
-  LightBurn already open each click opens another LightBurn window; only one of them can hold the laser.
+  up, but only if the superboxes window still has focus by then. With LightBurn already open, the project opens in
+  that LightBurn, which first asks whether to save the project it has open, as a double-click on the file would.
 
 | Colour | Layer | Mode | poplar 3.6 values | Used for |
 |---|---|---|---|---|
 | blue C01 | 2 LINE | Line | 42 % · 133 mm/s | maker's mark, engraved labels, etching from boxes.py |
 | red C02 | 3 CUT | Line | 100 % · 12.5 mm/s, 1 pass, no kerf offset | every cut (boxes.py's outer and inner cuts), runs last |
-| T1 | tool | never output | | sheet outline, 390 mm reach line, part labels |
+| T1 | tool | never output | | sheet outline up to the 390 mm reach (its top edge is the reach line), part labels |
 
 Values come from the eVlaser toolchain (`python/evlaser/machine.py`). Holes are cut before outlines
 (Inner-to-Outer), the origin is the sheet's lower-left corner, **Start From: Absolute Coords**. The project opens
