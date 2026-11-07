@@ -172,6 +172,13 @@ class Endpoint(unittest.TestCase):
         self.assertEqual(self.post({}, path="/api/other")[0], 404)
         self.assertEqual(len(self.calls), n)
 
+    def test_a_too_big_request_gets_an_answer(self):
+        n = len(self.calls)
+        app = {"Origin": "http://localhost:%d" % self.port, "Sec-Fetch-Site": "same-origin"}
+        status, body = self.post(app, body=json.dumps({"folder": "f" * 200000}))
+        self.assertEqual((status, json.loads(body)), (200, {"ok": False, "error": "request too big"}))
+        self.assertEqual(len(self.calls), n)
+
     def get(self, path, host=None):
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         c.request("GET", path, headers={"Host": host or "localhost:%d" % self.port})
