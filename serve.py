@@ -22,6 +22,7 @@ import string
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -166,12 +167,96 @@ def lightburn_exe():
 def launch_lightburn(path):
     exe = lightburn_exe()
     if exe:   # a GUI program: no console window; its own process group, so Ctrl+C here doesn't reach it
-        subprocess.Popen([exe, path], cwd=os.path.dirname(path),
-                         creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        proc = subprocess.Popen([exe, path], cwd=os.path.dirname(path),
+                                creationflags=getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+        threading.Thread(target=bring_forward, args=(proc.pid,), daemon=True).start()
     elif hasattr(os, "startfile"):
         os.startfile(path)
     else:
         raise OSError("LightBurn not found")
+
+
+# ------------------------------------------------------------------ LightBurn to the front
+# Windows doesn't let a background program's child take the foreground, so LightBurn would open behind the app
+# (measured 2026-11-07). Samuel chose to have it brought forward, as an exception to his rule that nothing raises a
+# window: only once its main window is up, and only while the superboxes window still has focus, so it never jumps
+# over other work he went back to while LightBurn was starting.
+APP_TITLE = "superboxes"     # the app window's title (index.html <title>)
+
+
+def _user32():
+    import ctypes
+    user32 = ctypes.windll.user32
+    user32.GetForegroundWindow.restype = ctypes.c_void_p     # window handles are pointer-sized
+    user32.GetWindow.restype = ctypes.c_void_p
+    return ctypes, user32
+
+
+def window_title(hwnd):
+    ctypes, user32 = _user32()
+    buf = ctypes.create_unicode_buffer(512)
+    if hwnd:
+        user32.GetWindowTextW(ctypes.c_void_p(hwnd), buf, 512)
+    return buf.value
+
+
+def foreground_window():
+    return _user32()[1].GetForegroundWindow()
+
+
+def main_window(pid):
+    """The visible top-level, unowned window of process `pid` whose title names LightBurn, or None."""
+    ctypes, user32 = _user32()
+    found = []
+    proto = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+
+    def each(hwnd, _):
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(owner))
+        if (owner.value == pid and user32.IsWindowVisible(ctypes.c_void_p(hwnd))
+                and not user32.GetWindow(ctypes.c_void_p(hwnd), 4)            # GW_OWNER: skip dialogs
+                and "lightburn" in window_title(hwnd).lower()):
+            found.append(hwnd)
+            return False
+        return True
+
+    user32.EnumWindows(proto(each), None)
+    return found[0] if found else None
+
+
+def raise_window(hwnd):
+    """SetForegroundWindow from a background program: share input with the foreground window's thread for the
+    call, which is what Windows checks."""
+    ctypes, user32 = _user32()
+    user32.GetWindowThreadProcessId.restype = ctypes.c_ulong
+    fg = user32.GetForegroundWindow()
+    fg_thread = user32.GetWindowThreadProcessId(ctypes.c_void_p(fg), None)
+    me = ctypes.windll.kernel32.GetCurrentThreadId()
+    attached = fg_thread and fg_thread != me and user32.AttachThreadInput(me, fg_thread, True)
+    try:
+        if user32.IsIconic(ctypes.c_void_p(hwnd)):
+            user32.ShowWindow(ctypes.c_void_p(hwnd), 9)                        # SW_RESTORE
+        user32.BringWindowToTop(ctypes.c_void_p(hwnd))
+        user32.SetForegroundWindow(ctypes.c_void_p(hwnd))
+    finally:
+        if attached:
+            user32.AttachThreadInput(me, fg_thread, False)
+
+
+def bring_forward(pid, timeout=30.0, poll=0.25):
+    """Wait for LightBurn's main window (up to `timeout` s), then bring it in front of the superboxes window - but
+    only if that window still has focus. Returns True when it raised it."""
+    if os.name != "nt":
+        return False
+    deadline = time.monotonic() + timeout
+    hwnd = main_window(pid)
+    while not hwnd and time.monotonic() < deadline:
+        time.sleep(poll)
+        hwnd = main_window(pid)
+    if not hwnd or window_title(foreground_window()).strip().lower() != APP_TITLE:
+        return False
+    raise_window(hwnd)
+    return True
 
 
 def open_in_lightburn(req, launch=None):

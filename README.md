@@ -98,8 +98,10 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
 
 **One LightBurn project per box, `<name>.lbrn2`, with one page per A3 sheet** ("Sheet 1", "Sheet 2", …: the tabs over
 the workspace or the Pages panel). Pages need **LightBurn 2.2** or newer; older versions show every sheet's parts on
-top of each other. Open a page, check it in LightBurn's Preview, then Start. Layers and the Notes belong to the
-project, so they're the same on every page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
+top of each other. Open a page, then Start: **only the page shown is cut** (checked 2026-11-07 in LightBurn 2.2.01
+by saving G-code from page 1 and page 2: each held only its own page). With **Cut Selected Graphics** on, select
+first; Select All takes only the page shown. Layers and the Notes belong to the project, so they're the same on every
+page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
 `00_calibration/`.
 
 - **Export as LightBurn** writes the project (with a folder: into `<folder>/<box name>/`, plus the `.box.json`).
@@ -108,7 +110,9 @@ project, so they're the same on every page. Calibration sheets are `00a_kerf-tes
   LightBurn: a browser can't. The browser also never learns the folder's full path, only its name, so `serve.py`
   looks for a folder by that name in your home folder and near the top of each fixed drive (e.g.
   `C:\Projects\Laser lightburn`). It opens the file only if it's byte for byte the one just written. If it can't
-  find the folder, the app asks for its path once and remembers it.
+  find the folder, the app asks for its path once and remembers it. LightBurn comes to the front once its window is
+  up, but only if the superboxes window still has focus by then. LightBurn runs several copies side by side, so with
+  LightBurn already open each click opens another LightBurn window; only one of them can hold the laser.
 
 | Colour | Layer | Mode | poplar 3.6 values | Used for |
 |---|---|---|---|---|

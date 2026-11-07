@@ -70,6 +70,46 @@ class OpenInLightBurn(unittest.TestCase):
         self.assertEqual(self.launched, [self.file])
 
 
+@unittest.skipUnless(os.name == "nt", "Windows only")
+class BringForward(unittest.TestCase):
+    """LightBurn comes to the front only while the superboxes window has focus. Window calls are stubbed."""
+
+    def setUp(self):
+        self.real = {n: getattr(serve, n) for n in ("main_window", "window_title", "foreground_window", "raise_window")}
+        self.raised = []
+        self.focused = "superboxes"
+        self.appears_after = 0          # main_window() calls until LightBurn's window exists
+        self.calls = 0
+
+        def main_window(pid):
+            self.calls += 1
+            return 111 if self.calls > self.appears_after else None
+
+        serve.main_window = main_window
+        serve.foreground_window = lambda: 222
+        serve.window_title = lambda h: self.focused if h == 222 else "x - LightBurn"
+        serve.raise_window = self.raised.append
+
+    def tearDown(self):
+        for n, f in self.real.items():
+            setattr(serve, n, f)
+
+    def test_raised_while_the_app_has_focus(self):
+        self.appears_after = 3
+        self.assertTrue(serve.bring_forward(1, timeout=2, poll=0.01))
+        self.assertEqual(self.raised, [111])
+
+    def test_left_alone_when_you_moved_on(self):
+        self.focused = "Elements - Visual Studio Code"
+        self.assertFalse(serve.bring_forward(1, timeout=1, poll=0.01))
+        self.assertEqual(self.raised, [])
+
+    def test_gives_up_when_no_window_comes(self):
+        self.appears_after = 10 ** 6
+        self.assertFalse(serve.bring_forward(1, timeout=0.1, poll=0.01))
+        self.assertEqual(self.raised, [])
+
+
 class Endpoint(unittest.TestCase):
     """The HTTP side: only the app's own page gets an answer."""
 

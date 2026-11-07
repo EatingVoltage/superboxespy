@@ -256,7 +256,7 @@ def project_files(name, title, parts, placements, deco, material, sheet, notes_e
                  % (title, s["parts"], _time_txt(s["minutes"]), st[0], s["offcut"]))
     else:
         notes = ("%s - %d sheets, one page each (LightBurn 2.2 or newer). Each page is one sheet: open it with the "
-                 "tabs over the workspace or in the Pages panel, check LightBurn's Preview, then Start.\n"
+                 "tabs over the workspace or in the Pages panel, then Start - only the page shown is cut.\n"
                  % (title, n_sheets))
         notes += "".join("Sheet %d: %d part%s, %s, offcut %g x %.0f mm across the top.\n"
                          % (n + 1, s["parts"], "" if s["parts"] == 1 else "s", _time_txt(s["minutes"]), st[0],
