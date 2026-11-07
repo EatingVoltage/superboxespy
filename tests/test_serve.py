@@ -146,9 +146,9 @@ class Endpoint(unittest.TestCase):
         cls.server.server_close()
         serve.open_in_lightburn = cls.real
 
-    def post(self, headers, path=serve.OPEN_LIGHTBURN):
+    def post(self, headers, path=serve.OPEN_LIGHTBURN, body=None):
         c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
-        body = json.dumps({"folder": "f"})
+        body = body or json.dumps({"folder": "f"})
         h = {"Host": "localhost:%d" % self.port, "Content-Type": "application/json", **headers}
         c.request("POST", path, body=body, headers={k: v for k, v in h.items() if v is not None})
         r = c.getresponse()
@@ -171,6 +171,30 @@ class Endpoint(unittest.TestCase):
                 self.assertEqual(self.post(headers)[0], 403)
         self.assertEqual(self.post({}, path="/api/other")[0], 404)
         self.assertEqual(len(self.calls), n)
+
+    def get(self, path, host=None):
+        c = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        c.request("GET", path, headers={"Host": host or "localhost:%d" % self.port})
+        r = c.getresponse()
+        return r.status, r.read()
+
+    def test_logos_come_from_the_folder_to_this_pc_only(self):
+        import tempfile
+        real = serve.LOGO_DIR
+        with tempfile.TemporaryDirectory() as d:
+            for name in ("a.svg", "b c.svg", "notes.txt"):
+                with open(os.path.join(d, name), "w", encoding="utf-8") as f:
+                    f.write("<svg/>")
+            serve.LOGO_DIR = d
+            try:
+                status, body = self.get(serve.LOGOS)
+                self.assertEqual((status, json.loads(body)), (200, ["a.svg", "b c.svg"]))
+                self.assertEqual(self.get(serve.LOGOS + "/b%20c.svg"), (200, b"<svg/>"))
+                self.assertEqual(self.get(serve.LOGOS + "/notes.txt")[0], 404)          # only .svg
+                self.assertEqual(self.get(serve.LOGOS + "/..%2Fserve.py")[0], 404)       # no paths
+                self.assertEqual(self.get(serve.LOGOS, host="evil.example:%d" % self.port)[0], 403)
+            finally:
+                serve.LOGO_DIR = real
 
 
 if __name__ == "__main__":

@@ -23,9 +23,10 @@ MARK_H = 3.0           # cap height of the maker's mark, mm
 
 
 def mark_text(when=None):
-    """SG + month + last two digits of the year of the cut: October 2026 -> SG1026."""
+    """SG + month + last two digits of the year of the cut, the month without a leading zero (eVlaser): October 2026
+    -> SG1026, August 2026 -> SG826. The stamp case uses this one too."""
     when = when or datetime.date.today()
-    return "SG%02d%02d" % (when.month, when.year % 100)
+    return "SG%d%02d" % (when.month, when.year % 100)
 
 
 def slug(s):
@@ -174,7 +175,10 @@ def placed_shape(p, pl, comp=None):
 
 def placed_part(p, pl, deco, comp=None):
     """evlaser Part on the sheet. Per-axis mode: the closed cut outlines become the compensated region, grown by
-    bx along the machine's X and by along Y after the part is rotated into place."""
+    bx along the machine's X and by along Y after the part is rotated into place. A part that places itself (the
+    stamp case's boards: stampcase.parts.BoardPart) does so."""
+    if hasattr(p, "placed_ev"):
+        return p.placed_ev(pl)
     c = comp_of(p, comp)
     if not c:
         return placed(ev_part(p, deco), p, pl)

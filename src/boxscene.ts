@@ -18,12 +18,18 @@ export interface Extent { lo: Pt3; hi: Pt3 }
 /** The clear inside of the closed box; cells = compartments (floor or opening as a flat box, clear size);
  *  front/back = inside height at the front and back of a sloped box. */
 export interface Inside extends Extent { cells: (Extent & { size: [number, number] })[]; front?: number; back?: number }
+/** Things in the box that aren't cut parts (the stamp case's magnets and stamps), in world coordinates of the
+ *  assembled box; each moves with the part it belongs to (explode, lid). */
+export type Extra =
+  | { kind: "cylinder"; at: Pt3; r: number; h: number; part: number; color: "magnet" }
+  | { kind: "box"; lo: Pt3; hi: Pt3; part: number; color: "stamp"; bad?: boolean; name?: string };
 export interface Assembly {
   kind: "assembled" | "flat";
   parts: Placed3D[];
   size: Pt3 | null;
   outside: Extent | null;   // measured from the placed solids, lid closed: what calipers read
   inside: Inside | null;
+  extras?: Extra[];
 }
 
 export const WOOD = new THREE.MeshStandardMaterial({ color: 0xf0dcb4, roughness: 0.8, metalness: 0 });
@@ -31,6 +37,8 @@ export const CHAR = new THREE.MeshStandardMaterial({ color: 0x5b3a1e, roughness:
 export const BAD = new THREE.MeshStandardMaterial({ color: 0xff5a73, roughness: 0.7, metalness: 0, emissive: 0x400010 });
 export const BAD_EDGE = new THREE.MeshStandardMaterial({ color: 0x9b1030, roughness: 0.9 });
 const ENGRAVE = new THREE.LineBasicMaterial({ color: 0x4a2c12 });
+const MAGNET = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.35, metalness: 0.8 });
+const STAMP = new THREE.MeshStandardMaterial({ color: 0x8c3b2f, roughness: 0.9, metalness: 0 });
 const EDGES = new THREE.LineBasicMaterial({ color: 0x3b250f, transparent: true, opacity: 0.55 });
 
 export function lights(scene: THREE.Scene) {
@@ -183,6 +191,27 @@ export function buildBoxScene(b: Build, thickness: number,
       add(part, cp, c, false);
     });
   }
+  // magnets and stamps: posed like the part they belong to
+  const extras: { group: THREE.Group; place: Placed3D }[] = [];
+  for (const e of asm.extras ?? []) {
+    const place = asm.parts[e.part];
+    if (!place) continue;
+    let mesh: THREE.Mesh;
+    if (e.kind === "cylinder") {
+      mesh = new THREE.Mesh(new THREE.CylinderGeometry(e.r, e.r, e.h, 20), MAGNET);
+      mesh.rotation.x = Math.PI / 2;                       // three's cylinders stand on Y; ours on Z
+      mesh.position.set(e.at[0], e.at[1], e.at[2] + e.h / 2);
+    } else {
+      const [x0, y0, z0] = e.lo, [x1, y1, z1] = e.hi;
+      mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), e.bad ? BAD : STAMP);
+      mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+    }
+    const group = new THREE.Group();
+    group.matrixAutoUpdate = false;
+    group.add(mesh);
+    root.add(group);
+    extras.push({ group, place });
+  }
   const tmp = new THREE.Matrix4();
   const poseMatrix = (p: Placed3D, explode: number, open: number) => {
     const M = new THREE.Matrix4();
@@ -210,6 +239,10 @@ export function buildBoxScene(b: Build, thickness: number,
       for (const it of items) {
         it.group.matrix.copy(poseMatrix(it.place, explode, open).multiply(it.base));
         it.group.matrixWorldNeedsUpdate = true;
+      }
+      for (const x of extras) {
+        x.group.matrix.copy(poseMatrix(x.place, explode, open));
+        x.group.matrixWorldNeedsUpdate = true;
       }
     },
     assembledBounds() {

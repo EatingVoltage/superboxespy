@@ -23,6 +23,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +43,8 @@ BROWSERS = {
 
 
 OPEN_LIGHTBURN = "/api/open-lightburn"
+LOGOS = "/api/logos"
+LOGO_DIR = r"C:\Projects\eating voltage Fonts\logos"
 LIGHTBURN_EXE = [r"C:\Program Files\LightBurn\LightBurn.exe", r"C:\Program Files (x86)\LightBurn\LightBurn.exe"]
 # never searched for the box folder: system folders, caches, repos
 SKIP_DIRS = {"windows", "program files", "program files (x86)", "programdata", "appdata", "system volume information",
@@ -56,6 +59,39 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):   # quiet: only errors
         if args and str(args[1]).startswith(("4", "5")):
             super().log_message(fmt, *args)
+
+    def do_GET(self):
+        path = urllib.parse.unquote(self.path.split("?")[0])
+        if path == LOGOS or path.startswith(LOGOS + "/"):
+            self.send_logo(path[len(LOGOS) + 1:])
+            return
+        super().do_GET()
+
+    def send_logo(self, name):
+        """GET /api/logos: the house logos' names (JSON); /api/logos/<name>.svg: one of them. The logos are private and
+        never ship with the app (.grill/stamp-case-merge.md): they come from Samuel's folder, to this PC's own page."""
+        host = self.headers.get("Host", "")
+        port = self.server.server_address[1]
+        if host not in ("localhost:%d" % port, "127.0.0.1:%d" % port):
+            self.send_error(403)
+            return
+        try:
+            names = sorted(f for f in os.listdir(LOGO_DIR) if f.lower().endswith(".svg"))
+        except OSError:
+            names = []
+        if not name:
+            body, kind = json.dumps(names).encode("utf-8"), "application/json"
+        elif name in names:      # only a file that is in the folder: no paths
+            with open(os.path.join(LOGO_DIR, name), "rb") as f:
+                body, kind = f.read(), "image/svg+xml"
+        else:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", kind)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_POST(self):
         if self.path != OPEN_LIGHTBURN:

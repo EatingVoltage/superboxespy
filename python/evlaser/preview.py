@@ -77,7 +77,8 @@ class Canvas:
 
 
 def render_sheet(path, parts, sheet, s=3.0):
-    """Sheet in layer colours; the area above the reach limit is grey."""
+    """Sheet in layer colours; the area above the reach limit is grey. Saved to `path` unless it's None; returns the
+    Canvas."""
     sw, sh, usable = sheet
     c = Canvas(sw, sh, s, (255, 255, 255))
     c.draw.rectangle([c.P(0, sh), c.P(sw, 0)], fill=(245, 235, 215))
@@ -96,7 +97,9 @@ def render_sheet(path, parts, sheet, s=3.0):
         for it in p.items:
             if it[0] == M.REF:
                 c.outline(it, SHEET_COL[M.REF])
-    c.img.save(path)
+    if path:
+        c.img.save(path)
+    return c
 
 
 def hatch_pattern(c, spacing_mm=0.5):

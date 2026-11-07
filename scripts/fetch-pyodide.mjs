@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 const SRC = "node_modules/pyodide";
 const DST = "public/pyodide";
-const NEEDED = ["numpy", "shapely", "affine", "typing-extensions"];
+const NEEDED = ["numpy", "shapely", "affine", "typing-extensions", "fonttools"];   // fonttools: eV Sans outlines (stamp case)
 
 const lock = JSON.parse(readFileSync(join(SRC, "pyodide-lock.json"), "utf8"));
 const version = JSON.parse(readFileSync(join(SRC, "package.json"), "utf8")).version;

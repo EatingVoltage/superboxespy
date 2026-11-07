@@ -1,0 +1,63 @@
+FONTLOG for eV Sans
+===================
+
+This file records the changes to eV Sans, as the SIL Open Font License recommends for every Modified Version.
+
+
+Basic Font Information
+----------------------
+
+eV Sans is the typeface of eatingVoltage. It is a Modified Version of Jost* 3.7 by Owen Earl
+(indestructible type*), https://github.com/indestructible-type/Jost, commit 35f141c.
+
+It comes in three upright weights, Light (300), Regular (400) and Bold (700, drawn from Jost's 500), as OTF, TTF
+and WOFF2.
+Its characters are Latin for the European languages, figures, fractions, punctuation, currency signs and
+Δ Ω µ π. Jost's Cyrillic and Greek letters are left out.
+
+eV Sans has no Reserved Font Name.
+
+
+ChangeLog
+---------
+
+2026-10-23 (eatingVoltage) eV Sans 1.002
+  - Bold is lighter: it is 1.001's Medium, unchanged in shape, spacing and kerning, now named Bold. 1.001's
+    Bold was too heavy and is gone, and with it the Medium; eV Sans has three weights.
+
+2026-10-22 (eatingVoltage) eV Sans 1.001
+  - The hooks of g and j are longer: they run on past their lowest point and end cut square to the stroke.
+  - J sits on the baseline (Jost's reaches below it), its hook as short as j's, and is spaced like a letter
+    with a round side; Jost's kerning that kept g, j and q away from its hook is gone. In Ĳ the J moves off the I.
+  - y's tail is straight again, its end cut square to the stroke.
+  - j keeps its place and its dot is over its stem again: in 1.000 the shorter hook had moved the stem
+    towards the letter before, and the dot only half as far.
+
+2026-10-22 (eatingVoltage) eV Sans 1.000
+  Each weight is made from the matching instance of Jost's variable font. Changes:
+  - A has no crossbar (Λ), in every A with an accent too.
+  - The points of A, M, N, V, W, v and w are cut flat on the baseline and the cap or x-height,
+    3/4 of a stem wide, instead of running past the line to a sharp tip.
+  - M has upright sides; its middle comes down to the baseline.
+  - The x-height is 0.706 of the cap height (Jost: 0.657); the ascenders keep Jost's height.
+  - The capitals' widths move halfway towards even proportions: E, F, L, P, B, R, T, X, K, J wider;
+    O, Q, G, M, N, W narrower.
+  - 10 units more space on each side of every character.
+  - a is single-storey (Jost's alternate); the stylistic set ss01 gives the two-storey a.
+  - The hooks of g and j end at their lowest point.
+  - t ends in a foot curving to the right.
+  - y's tail curves to the left like j's.
+  - Every stroke is as thick as the capital stem: horizontals and the lowercase stems are made heavier.
+  - Dots are square: on i and j, the umlauts and other accents, and in . : ; ! ?
+  - Ω is as tall as the capitals; U+2126 (Ohm sign) and U+2206 (increment) are mapped to Ω and Δ.
+  - Names, metadata and version are eV Sans's own.
+
+
+Acknowledgements
+----------------
+
+Owen Earl and The Jost Project Authors, for Jost*, which eV Sans is built from.
+
+N: eatingVoltage
+W: https://github.com/EatingVoltage/eV-Sans
+D: eV Sans 1.000, 1.001, 1.002

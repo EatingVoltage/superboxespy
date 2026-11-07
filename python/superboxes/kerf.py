@@ -14,17 +14,18 @@ from shapely import affinity
 QUAD_SEGS = 3   # segments per quarter of the (tiny) corner ellipse: ~0.05 mm chords, plenty for a 0.1 mm radius
 
 
-def offset_region(region, bx, by, quad_segs=QUAD_SEGS):
+def offset_region(region, bx, by, quad_segs=QUAD_SEGS, sign=1):
     """Minkowski sum of `region` with an axis-aligned ellipse of semi-axes bx (along X) and by (along Y).
-    Outlines grow, holes shrink - exactly what a burn correction does."""
+    Outlines grow, holes shrink - exactly what a burn correction does. sign=-1 is the Minkowski difference: the
+    cut path of a hole drawn as its own polygon (the stamp case's pockets), which shrinks it."""
     if region is None or region.is_empty:
         return region
     if bx <= 0 or by <= 0:
         raise ValueError("per-axis burn must be positive (got X %.3f, Y %.3f)" % (bx, by))
     if abs(bx - by) < 1e-9:
-        return region.buffer(bx, quad_segs=quad_segs)
+        return region.buffer(sign * bx, quad_segs=quad_segs)
     unit = affinity.scale(region, 1.0 / bx, 1.0 / by, origin=(0, 0))
-    return affinity.scale(unit.buffer(1.0, quad_segs=quad_segs), bx, by, origin=(0, 0))
+    return affinity.scale(unit.buffer(float(sign), quad_segs=quad_segs), bx, by, origin=(0, 0))
 
 
 def per_axis(material):

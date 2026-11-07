@@ -255,6 +255,43 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .inspector b { font-weight: 600; }
 .inspector .hint { margin-left: auto; }
 
+/* ---------- stamp case: board editor (src/stampcase.ts) */
+.board-tabs { display: flex; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.board-tabs [role=tab] {
+  border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; color: var(--muted);
+  padding: 6px 10px;
+}
+.board-tabs [role=tab][aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
+.board { flex: 1; min-height: 0; position: relative; }
+.board-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
+.board-wood { fill: var(--part); stroke: none; filter: drop-shadow(0 6px 18px rgba(0,0,0,.35)); }
+.board-cut { fill: none; stroke: var(--cut); stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
+.board-line { fill: none; stroke: var(--engrave); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+.board-svg .hit { fill: transparent; stroke: transparent; stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: grab; pointer-events: all; }
+.board-svg .hit:hover { fill: rgba(242, 179, 61, .12); }
+.board-svg .hit.sel { stroke: var(--accent); fill: rgba(242, 179, 61, .18); }
+.board-svg .hit.bad { stroke: var(--bad); fill: rgba(255, 77, 109, .22); }
+.board-svg .magnet { fill: rgba(80, 90, 110, .35); }
+.board-svg .block { stroke-dasharray: 4 3; stroke: rgba(61, 123, 255, .35); }
+.board-svg .label-box { fill: none; stroke: var(--accent); stroke-dasharray: 2 2; stroke-width: 1px; vector-effect: non-scaling-stroke; pointer-events: none; }
+.board-bar .num { width: 64px; }
+
+/* ---------- stamp case: side panel */
+.stamp-add { display: flex; gap: 4px; align-items: center; }
+.stamp-add input[type=text] { flex: 1; min-width: 0; }
+.stamp-add .num, .stamp-row .num { width: 52px; }
+.stamp-list { display: flex; flex-direction: column; gap: 3px; margin: 0 0 10px; }
+.stamp-row { display: flex; gap: 4px; align-items: center; padding: 2px 3px; border-radius: 6px; border: 1px solid transparent; cursor: pointer; }
+.stamp-row input[type=text] { flex: 1; min-width: 0; }
+.stamp-row.sel { border-color: var(--accent); background: rgba(242, 179, 61, .08); }
+.stamp-row.bad input[type=text] { color: var(--bad); }
+.btn-row { display: flex; gap: 6px; }
+.problem { display: block; width: 100%; text-align: left; margin: 0 0 4px; white-space: normal; line-height: 1.35; }
+.problem.error { border-color: #6b2a38; color: #ffb3c1; }
+.problem.warning { border-color: #6b5320; color: #f5d9a0; }
+.group .ok { color: var(--ok); }
+.sheet-use { line-height: 1.4; }
+
 /* ---------- 3D */
 .view3d { flex: 1; min-height: 0; position: relative; background: radial-gradient(ellipse at 50% 35%, #262b33, #121417 70%); }
 .view3d canvas { display: block; width: 100%; height: 100%; }

@@ -44,25 +44,7 @@ def _render(req):
 
 def _valid_locked(parts, layout, sheet):
     """Hand-placed parts that are still inside the area and clear of each other (sizes may have changed)."""
-    keep = []
-    x0, y0, x1, y1 = S.area(sheet)
-    for pl in layout or []:
-        if pl.get("part", -1) >= len(parts):
-            continue
-        p = parts[pl["part"]]
-        w, h = S.rotated_size(p.w, p.h, pl["rot"])
-        if pl["x"] < x0 - 1e-3 or pl["y"] < y0 - 1e-3 or pl["x"] + w > x1 + 1e-3 or pl["y"] + h > y1 + 1e-3:
-            continue
-        clash = False
-        for q in keep:
-            qw, qh = S.rotated_size(parts[q["part"]].w, parts[q["part"]].h, q["rot"])
-            if q["sheet"] == pl["sheet"] and pl["x"] < q["x"] + qw + M.GAP - 1e-3 and q["x"] < pl["x"] + w + M.GAP - 1e-3 \
-                    and pl["y"] < q["y"] + qh + M.GAP - 1e-3 and q["y"] < pl["y"] + h + M.GAP - 1e-3:
-                clash = True
-                break
-        if not clash:
-            keep.append({k: pl[k] for k in ("part", "sheet", "x", "y", "rot")})
-    return keep
+    return S.keep_locked([(p.w, p.h) for p in parts], layout, sheet)
 
 
 def _title(req):
@@ -77,7 +59,18 @@ def _title(req):
     return "%s%s" % (req["generator"], (" " + dims + (" outside" if p.get("outside") else " inside")) if dims else "")
 
 
+def _stampcase(req):
+    """The stamp case's api when req is for one, else None (it isn't a boxes.py generator)."""
+    if req.get("generator") == "StampCase":
+        from .stampcase import api as sc
+        return sc
+    return None
+
+
 def build(req):
+    sc = _stampcase(req)
+    if sc:
+        return sc.build(req)
     sheet = req.get("sheet") or S.A3
     parts, info = _render(req)
     locked = _valid_locked(parts, req.get("layout"), sheet)
@@ -114,6 +107,9 @@ def build(req):
 
 def export(req):
     """Files for the layout in req["layout"] (the full layout as shown). Refuses a layout that breaks the rules."""
+    sc = _stampcase(req)
+    if sc:
+        return sc.export(req)
     sheet = req.get("sheet") or S.A3
     parts, info = _render(req)
     layout = req.get("layout")
@@ -149,6 +145,10 @@ def export(req):
 
 def clash(req):
     """Overlapping parts in the pose the 3D view shows: req["matrices"] = 12 floats per part (or null)."""
+    sc = _stampcase(req)
+    if sc:
+        _case, _lay, parts = sc._parts(req)
+        return {"ok": True, "clashes": assembly.clashes(parts, req.get("matrices") or [], sc.C.THICKNESS)}
     parts, info = _render(req)
     found = assembly.clashes(parts, req.get("matrices") or [], info["thickness"])
     return {"ok": True, "clashes": found}
@@ -159,17 +159,22 @@ def call(fn, req_json):
     try:
         req = json.loads(req_json) if req_json else {}
         if fn == "catalog":
-            res = {"ok": True, "generators": catalog.catalog(), "boxes_version": catalog.boxes_version(),
+            from .stampcase import api as sc
+            res = {"ok": True, "generators": catalog.catalog() + [sc.info()], "boxes_version": catalog.boxes_version(),
                    "materials": {k: {"label": v["label"], "thickness": v["thickness"],
                                      "placeholder": sorted(v["placeholder"])} for k, v in M.MATERIALS.items()}}
         elif fn == "schema":
-            res = {"ok": True, "groups": catalog.schema(req["generator"])}
+            # the stamp case has no sliders: its side panel is the stamp list (src/stampcase.ts)
+            res = {"ok": True, "groups": [] if _stampcase(req) else catalog.schema(req["generator"])}
         elif fn == "build":
             res = build(req)
         elif fn == "export":
             res = export(req)
         elif fn == "clash":
             res = clash(req)
+        elif fn == "stampcase_op":
+            from .stampcase import api as sc
+            res = sc.op(req)
         elif fn in ("kerf_sheet", "comb_sheet", "calibration_export"):
             from . import calibration
             res = getattr(calibration, fn)(req)

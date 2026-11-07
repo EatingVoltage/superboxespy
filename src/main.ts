@@ -6,8 +6,9 @@ import { renderParams, h } from "./params";
 import { SheetView, problems } from "./sheetview";
 import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
+import * as sc from "./stampcase";
 import { A3 } from "./types";
-import type { BoxConfig, Build, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
+import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -23,6 +24,7 @@ const S = {
   fit: "press" as Fit,
   compOverride: null as { burn: number; bx: number; by: number } | null,  // burns of an opened file that differ from the profile
   thicknessOverride: null as number | null,
+  kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
   options: { labels_engrave: false, mark: { enabled: true, text: null, part: null } } as Options,
   notes: "",
@@ -36,6 +38,7 @@ const S = {
 };
 
 const FIRST_BOX = { generator: "ABox", name: "abox-50-tester", params: { x: 50, y: 50, h: 50, outside: true } };
+const isStamp = (gen = S.generator) => gen === sc.GENERATOR;
 
 // ------------------------------------------------------------------ small UI helpers
 let toastTimer = 0;
@@ -95,10 +98,20 @@ function material() {
     : c.status === "measured" ? `${S.fit} fit ${c.delta >= 0 ? "+" : ""}${c.delta.toFixed(2)}, ${what} (measured)`
     : c.status === "kerf" ? `${what} = measured kerf / 2 (${S.fit} fit not tested yet)`
     : `${what} - UNCONFIRMED, cut the 00a/00b calibration sheets first`;
+  const k = kerf();
   return {
     key: p.key, thickness: t, burn, fit: S.fit, status: c.status, fit_note: note,
     ...(axis ? { burn_x: bx, burn_y: by } : {}),
+    ...(k ? { kerf_x: k.x, kerf_y: k.y } : {}),
   };
+}
+
+/** The kerf a stamp case is cut with (it takes kerf / 2 per axis and no fit): a file's own, else the profile's. */
+function kerf(): { x: number; y: number } | null {
+  if (S.kerfOverride) return S.kerfOverride;
+  const p = profile();
+  if (p.kerfX == null && p.kerfY == null) return null;
+  return { x: p.kerfX ?? p.kerfY!, y: p.kerfY ?? p.kerfX! };
 }
 
 function renderMaterial() {
@@ -110,11 +123,15 @@ function renderMaterial() {
   for (const q of mats.all()) sel.append(h("option", { value: q.key, selected: q.key === p.key }, q.label));
   sel.onchange = () => {
     S.materialKey = sel.value;
-    S.compOverride = S.thicknessOverride = null;
+    S.compOverride = S.thicknessOverride = S.kerfOverride = null;
     changed(true);
     renderMaterial();
   };
   el.append(h("div", { class: "row" }, sel));
+  if (isStamp()) {
+    renderStampMaterial(el, m.thickness);
+    return;
+  }
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Fit" });
   for (const f of ["press", "glue"] as Fit[]) {
     const b = h("button", { "aria-pressed": S.fit === f }, f === "press" ? "Press fit" : "Glue fit");
@@ -148,10 +165,37 @@ function renderMaterial() {
   }
 }
 
+/** A stamp case has no press or glue fit (the 1 mm of air around each stamp is the fit): kerf / 2 per axis. */
+function renderStampMaterial(el: HTMLElement, thickness: number) {
+  const k = kerf();
+  const kt = k ? `X ${f3(k.x)} · Y ${f3(k.y)} mm` : "not measured";
+  el.append(h("div", { class: "readout" }, h("span", {}, "Thickness ", h("b", {}, `${thickness} mm`)),
+    h("span", { title: "Outlines and pockets get half the kerf per axis; magnet holes are drawn as they are" }, "Kerf ", h("b", {}, kt), " ",
+      h("span", { class: `chip-status ${S.kerfOverride ? "kerf" : k ? "measured" : "default"}` }, S.kerfOverride ? "from file" : k ? "measured" : "unconfirmed"))));
+  if (S.kerfOverride || S.thicknessOverride != null) {
+    const use = h("button", {}, "Use the material profile instead");
+    use.onclick = () => {
+      S.kerfOverride = S.thicknessOverride = null;
+      changed(true);
+      renderMaterial();
+    };
+    el.append(h("div", { class: "notice" }, "This case was saved with other material values than your current profile. ", use));
+  } else if (!k) {
+    const go = h("button", {}, "Open calibration");
+    go.onclick = () => tab("calib");
+    el.append(h("div", { class: "notice" }, "The kerf of this material hasn't been measured: cut the 00a kerf test first. Until then the case uses 0.33 / 0.26. ", go));
+  }
+}
+
 // ------------------------------------------------------------------ output options
 function renderOutput() {
   const el = $("output");
-  el.replaceChildren(h("h3", {}, "Engraving & notes"));
+  el.replaceChildren(h("h3", {}, isStamp() ? "Notes" : "Engraving & notes"));
+  if (isStamp()) {
+    el.append(h("div", { class: "row hint" }, "The maker's mark goes on the top pocket board, next to the logo and the project name."));
+    el.append(notesRow());
+    return;
+  }
   const sw = (label: string, checked: boolean, on: (v: boolean) => void, title = "") => {
     const box = h("input", { type: "checkbox", checked, role: "switch" }) as HTMLInputElement;
     box.onchange = () => on(box.checked);
@@ -173,13 +217,17 @@ function renderOutput() {
     S.options.labels_engrave = v;
     changed(true);
   }, "Off: labels only on the T1 tool layer (shown, never cut). On: engraved on LINE."));
+  el.append(notesRow());
+}
+
+function notesRow() {
   const notes = h("textarea", { rows: 3, placeholder: "Notes for next time (fit, glue, what you'd change)" }) as HTMLTextAreaElement;
   notes.value = S.notes;
   notes.oninput = () => {
     S.notes = notes.value;
     S.dirty = true;
   };
-  el.append(h("div", { class: "row text-row" }, h("label", {}, "Notes"), notes));
+  return h("div", { class: "row text-row" }, h("label", {}, "Notes"), notes);
 }
 
 // ------------------------------------------------------------------ parameters
@@ -199,6 +247,10 @@ function defaults(groups: Group[]): Record<string, any> {
 }
 
 function renderParamPanel() {
+  if (isStamp()) {
+    sc.renderPanel($("params"), stampHost, editor);
+    return;
+  }
   const groups = S.schemas.get(S.generator);
   if (!groups) return;
   renderParams($("params"), groups, S.params, (name, value, final) => {
@@ -216,6 +268,7 @@ let pendingFinal = false;
  *  reads the newest values when it starts; py.latest drops builds a newer one has overtaken. */
 function changed(final: boolean) {
   S.dirty = true;
+  if (final) remember();
   pendingFinal ||= final;
   if (pendingTimer && !final) return;
   clearTimeout(pendingTimer);
@@ -261,6 +314,11 @@ async function rebuild(final = true) {
     return k && k.x === p.x && k.y === p.y && k.rot === p.rot && k.sheet === p.sheet;
   }).map((p) => p.part));
   sheetView.show(b, S.sheet, S.placements);
+  if (isStamp() && b.stampcase) {
+    editor.update();
+    if ($("params").contains(document.activeElement)) sc.renderCheck($("params"), stampHost, editor);
+    else renderParamPanel();
+  }
   updateMessages();
   renderOutputHint();
   view3dStale = true;
@@ -292,12 +350,99 @@ function updateMessages() {
   showMessages(out);
 }
 
+// ------------------------------------------------------------------ undo / redo (every type, .grill/stamp-case-merge.md)
+// A snapshot is the box's own state: parameters, hand-placed parts, options. remember() runs on every finished
+// change (a slider's release, a sheet drag, an editor edit), so a whole slider drag is one step. Opening or
+// starting a box clears it.
+const H = { undo: [] as string[], redo: [] as string[], last: "" };
+
+function snapshot() {
+  return JSON.stringify({ params: S.params, layout: S.placements.filter((p) => S.manual.has(p.part)), options: S.options });
+}
+
+function remember() {
+  const now = snapshot();
+  if (now === H.last) return;
+  if (H.last) H.undo.push(H.last);
+  if (H.undo.length > 200) H.undo.shift();
+  H.redo = [];
+  H.last = now;
+}
+
+function resetHistory() {
+  H.undo = [];
+  H.redo = [];
+  H.last = snapshot();
+}
+
+function restore(snap: string) {
+  const o = JSON.parse(snap);
+  S.params = o.params;
+  S.placements = o.layout;
+  S.manual = new Set(o.layout.map((p: Placement) => p.part));
+  S.options = o.options;
+  H.last = snap;
+  S.dirty = true;
+  renderParamPanel();
+  renderOutput();
+  rebuild(true);
+}
+
+function undo() {
+  const prev = H.undo.pop();
+  if (!prev) return toast("Nothing to undo.");
+  H.redo.push(H.last);
+  restore(prev);
+}
+
+function redo() {
+  const next = H.redo.pop();
+  if (!next) return toast("Nothing to redo.");
+  H.undo.push(H.last);
+  restore(next);
+}
+
+// ------------------------------------------------------------------ the stamp case (src/stampcase.ts)
+const stampHost: sc.StampHost = {
+  params: () => S.params as Case,
+  build: () => S.build,
+  commit(next, select) {
+    S.params = next as unknown as Record<string, any>;
+    if (select) editor.select(select);
+    renderParamPanel();
+    changed(true);
+  },
+  async op(op, extra = {}) {
+    S.busy++;
+    setStatus(op === "repack" ? "Packing the stamps…" : "Placing…");
+    const r = await py.call("stampcase_op", { generator: sc.GENERATOR, params: S.params, material: material(), op, ...extra });
+    S.busy--;
+    setStatus("Ready");
+    if (!r.ok) {
+      toast(r.error ?? "That didn't work", true);
+      return null;
+    }
+    stampHost.commit(r.params, r.select);
+    return r.select as string[];
+  },
+  toast,
+  showSheets(on) {
+    $("sheets").hidden = !on;
+    if (!on) $("inspector").hidden = true;
+    document.querySelectorAll<HTMLElement>('.tab-tools[data-for="box"] button').forEach((b) => (b.hidden = !on));
+    if (on) sheetView.fit();
+  },
+};
+
+const editor = new sc.BoardEditor($("board-tabs"), $("board"), $("board-bar"), stampHost);
+
 // ------------------------------------------------------------------ sheets view
 const sheetView = new SheetView($("sheets"), {
   change(placements, moved) {
     S.placements = placements;
     moved.forEach((i) => S.manual.add(i));
     S.dirty = true;
+    remember();
     updateMessages();
   },
   select(i) {
@@ -335,8 +480,11 @@ function config(): BoxConfig {
   return {
     app: "superboxespy", version: 1, name: S.name, generator: S.generator, boxes_version: S.boxesVersion,
     params: { ...S.params },
-    material: { key: m.key, thickness: m.thickness, fit: S.fit, burn: m.burn,
-                ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
+    material: isStamp() && m.kerf_x != null
+      ? { key: m.key, thickness: m.thickness, fit: S.fit, burn: (m.kerf_x + m.kerf_y!) / 4, burn_x: m.kerf_x / 2,
+          burn_y: m.kerf_y! / 2, kerf_x: m.kerf_x, kerf_y: m.kerf_y }
+      : { key: m.key, thickness: m.thickness, fit: S.fit, burn: m.burn,
+          ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
     sheet: S.sheet,
     layout: S.manual.size ? S.placements : null,
     options: S.options, notes: S.notes, saved: new Date().toISOString(),
@@ -347,7 +495,7 @@ async function load(c: BoxConfig, useProfile = false) {
   const groups = await schema(c.generator);
   S.generator = c.generator;
   S.name = c.name || c.generator.toLowerCase();
-  S.params = { ...defaults(groups), ...c.params };
+  S.params = isStamp() ? sc.normalise(c.params) as unknown as Record<string, any> : { ...defaults(groups), ...c.params };
   S.materialKey = mats.get(c.material?.key ?? "poplar3.6").key;
   S.fit = c.material?.fit ?? "press";
   // a saved box keeps the burns it was made with; the side panel offers to switch to the current profile
@@ -355,8 +503,13 @@ async function load(c: BoxConfig, useProfile = false) {
   const cm = c.material;
   const fx = cm ? cm.burn_x ?? cm.burn : prof.bx;
   const fy = cm ? cm.burn_y ?? cm.burn : prof.by;
-  S.compOverride = !useProfile && cm && (Math.abs(fx - prof.bx) > 1e-6 || Math.abs(fy - prof.by) > 1e-6)
+  S.compOverride = !isStamp() && !useProfile && cm && (Math.abs(fx - prof.bx) > 1e-6 || Math.abs(fy - prof.by) > 1e-6)
     ? { burn: cm.burn, bx: fx, by: fy } : null;
+  // a stamp case takes kerf / 2 and no fit: only its kerf counts
+  const pk = mats.get(S.materialKey);
+  S.kerfOverride = isStamp() && !useProfile && cm?.kerf_x != null && cm.kerf_y != null &&
+    (Math.abs(cm.kerf_x - (pk.kerfX ?? NaN)) > 1e-6 || Math.abs(cm.kerf_y - (pk.kerfY ?? NaN)) > 1e-6)
+    ? { x: cm.kerf_x, y: cm.kerf_y } : null;
   S.thicknessOverride = !useProfile && cm && Math.abs(cm.thickness - mats.get(S.materialKey).thickness) > 1e-6
     ? cm.thickness : null;
   S.sheet = c.sheet ?? A3;
@@ -365,8 +518,11 @@ async function load(c: BoxConfig, useProfile = false) {
   S.notes = c.notes ?? "";
   S.placements = c.layout ?? [];
   S.manual = new Set((c.layout ?? []).map((p) => p.part));
-  S.fileVersion = c.boxes_version ?? null;
+  S.fileVersion = isStamp() ? null : c.boxes_version ?? null;   // boxes.py doesn't make stamp cases
   S.dirty = false;
+  editor.selected.clear();
+  editor.setActive(isStamp());
+  resetHistory();
   setGenLabel();
   ($("name") as HTMLInputElement).value = S.name;
   renderMaterial();
@@ -377,6 +533,7 @@ async function load(c: BoxConfig, useProfile = false) {
 
 async function newBox(gen: string, name?: string, params: Record<string, any> = {}) {
   const groups = await schema(gen);
+  if (isStamp(gen) && !Object.keys(params).length) params = structuredClone(sc.DEFAULT_CASE);
   await load({
     app: "superboxespy", version: 1, name: name ?? gen.toLowerCase(), generator: gen, boxes_version: S.boxesVersion,
     params: { ...defaults(groups), ...params },
@@ -622,7 +779,12 @@ function setGenLabel() {
 /** Each type with its defaults in the current material - what the gallery tiles show. */
 async function thumbnailBuild(name: string): Promise<Build | null> {
   const groups = await schema(name);
-  const params = name === FIRST_BOX.generator ? { ...defaults(groups), ...FIRST_BOX.params } : defaults(groups);
+  let params = name === FIRST_BOX.generator ? { ...defaults(groups), ...FIRST_BOX.params } : defaults(groups);
+  if (isStamp(name)) {
+    const packed = await py.call("stampcase_op", { generator: name, params: sc.demoCase(), material: material(), op: "repack" });
+    if (!packed.ok) return null;
+    params = packed.params;
+  }
   const r = await py.call<Build>("build", {
     generator: name, params, material: material(), sheet: S.sheet, layout: null,
     options: { labels_engrave: false, mark: { enabled: true, text: null, part: null } },
@@ -712,9 +874,22 @@ function wire() {
   $("btn-zoom-out").onclick = () => sheetView.setZoom(Number(getComputedStyle(document.documentElement).getPropertyValue("--sheet-zoom") || 1) / 1.2);
   document.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach((b) => (b.onclick = () => tab(b.dataset.tab!)));
   document.addEventListener("keydown", (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+    const ctrl = e.ctrlKey || e.metaKey;
+    const k = e.key.toLowerCase();
+    if (ctrl && k === "s") {
       e.preventDefault();
       saveBox();
+      return;
+    }
+    const typing = (e.target as HTMLElement).closest("input, textarea, select");
+    if (typing) return;                          // text fields keep their own keys, undo included
+    if (ctrl && (k === "z" || k === "y")) {
+      e.preventDefault();
+      (k === "y" || e.shiftKey ? redo : undo)();
+      return;
+    }
+    if (isStamp() && !$("board").hidden && !(e.target as HTMLElement).closest(".sheets, .gallery, .menu")) {
+      if (editor.key(k, e)) e.preventDefault();
     }
   });
   wireSplit();

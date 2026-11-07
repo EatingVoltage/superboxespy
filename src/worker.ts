@@ -7,6 +7,7 @@ type PyodideAPI = {
   loadPackage(names: string[], opts?: { messageCallback?: (m: string) => void }): Promise<void>;
   unpackArchive(buf: ArrayBuffer, format: string, opts?: { extractDir?: string }): void;
   runPython(code: string): unknown;
+  FS: { mkdirTree(path: string): void; writeFile(path: string, data: Uint8Array): void };
   globals: { set(name: string, value: unknown): void };
 };
 
@@ -24,13 +25,31 @@ async function start(): Promise<PyodideAPI> {
   const mod = await import(/* @vite-ignore */ pyodideURL + "pyodide.mjs");
   const py: PyodideAPI = await mod.loadPyodide({ indexURL: pyodideURL });
   report("Loading geometry libraries…");
-  await py.loadPackage(["numpy", "shapely", "affine", "typing-extensions"], { messageCallback: () => {} });
+  await py.loadPackage(["numpy", "shapely", "affine", "typing-extensions", "fonttools"], { messageCallback: () => {} });
   report("Loading boxes.py…");
   const zip = await (await fetch(new URL("py.zip", base).href, { cache: "no-cache" })).arrayBuffer();
   py.unpackArchive(zip, "zip", { extractDir: "/app" });
   py.runPython("import sys; sys.path.insert(0, '/app'); from superboxes import api");
+  await copyLogos(py, base);
   report("ready");
   return py;
+}
+
+/** The house logos for the stamp case: serve.py hands them over from Samuel's logos folder (they're private and never
+ *  ship with the app). Under `npm run dev`, or without the folder, there are none and a case simply has no logo. */
+async function copyLogos(py: PyodideAPI, base: URL) {
+  try {
+    const res = await fetch(new URL("api/logos", base).href);
+    if (!res.ok) return;
+    const names: string[] = await res.json();
+    py.FS.mkdirTree("/logos");
+    await Promise.all(names.map(async (n) => {
+      const r = await fetch(new URL("api/logos/" + encodeURIComponent(n), base).href);
+      if (r.ok) py.FS.writeFile("/logos/" + n, new Uint8Array(await r.arrayBuffer()));
+    }));
+  } catch {
+    /* no logos */
+  }
 }
 
 const ready = start();

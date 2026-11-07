@@ -218,7 +218,7 @@ class Export(unittest.TestCase):
     def test_mark_text(self):
         import datetime
         self.assertEqual(X.mark_text(datetime.date(2026, 10, 11)), "SG1026")
-        self.assertEqual(X.mark_text(datetime.date(2027, 3, 1)), "SG0327")
+        self.assertEqual(X.mark_text(datetime.date(2027, 3, 1)), "SG327")   # no leading zero (eVlaser)
 
 
 class Calibration(unittest.TestCase):

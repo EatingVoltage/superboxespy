@@ -84,6 +84,36 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   **Mark here** in the part bar under the sheets moves it to the selected part.
   **Engrave part labels** is off by default: labels then only sit on T1 (shown in LightBurn, never cut).
 
+## The stamp case
+
+**StampCase** in the gallery is a magnet-closed case for rubber stamps: a base, pocket boards with a pocket per stamp,
+a lid. It came from stampcaser (`C:\Projects\stampcaser`, 1.0.0), merged in on 2026-11-07
+(`.grill/stamp-case-merge.md`); its rules (pocket and finger notch, 5 mm of wood between pockets, names engraved
+three times, magnets, the eV cut corner, the hatched lid title) are stampcaser's, unchanged
+(`C:\Projects\stampcaser\.grill\stamp-case-designer.md`).
+
+- **Side panel:** the project name (the lid's title), how many pocket boards (2 make pockets 7.4 mm deep), the logo,
+  and the stamps. Type a stamp's name, width and height **as measured** and press Enter: 1 mm of air goes on every
+  side and the pocket lands in free space. Each stamp's row edits its name and size; the **t** field takes its
+  thickness if you want it checked (empty is fine). **Re-pack stamps** (Ctrl+P) lays every pocket out from scratch:
+  fewest sheets, then the smallest board. **Auto magnets** (Ctrl+M) hands the magnets back to the app.
+- **Check** lists what blocks the cut (red) and what's only a warning; click one to see it. Under it: the board
+  size, how many boards a sheet takes, and when a board a few mm smaller would save a sheet.
+- **The 2D half** has a tab per board (Base, pocket boards, Lid) and **Sheets**. Drag pockets, magnets and the text
+  blocks; anything too close to something else turns red while you drag. **R** rotates (a pocket or a block),
+  **F** moves the finger notch to the other side, **E** to the other end, **N** says where the stamp's name prefers to
+  go (beside the notch, the opposite side, the far end), **Ctrl+D** duplicates, **Del** deletes, arrow keys nudge.
+  Double-click free wood on the top pocket board or the lid for a magnet. Wheel zooms, the middle button pans,
+  Ctrl+0 fits.
+- **3D:** the boards stacked, **Explode** spreads them, **Lift cover** takes the lid off. Magnets show in their
+  holes; a stamp with a thickness sits in its pocket, red when it's too thick for the lid to close.
+- **Material:** a stamp case takes the profile's kerf, half of it per axis on outlines and pockets, and **no fit**:
+  the 1 mm of air is the fit. Magnet holes are drawn at Ø2.6 without any offset (3 × 4 mm magnets, pressed in).
+- **Logos** come from `C:\Projects\eating voltage Fonts\logos`, through `serve.py`; they never ship with the app.
+  Under `npm run dev` or without that folder a case has no logo.
+- The boards go on the sheets like any box's parts, so you can drag them there too.
+- `scripts/convert_stampcase.py` turned stampcaser's `.stampcase` files into `.box.json` (done once, 2026-11-07).
+
 ## Saving and sharing
 
 - **Save** (Ctrl+S) writes `<box name>.box.json`. It holds every parameter, not just the changed ones, plus the
@@ -146,14 +176,22 @@ Done:
   `.grill/live-3d-dimensions-autofit.md`). Updates per second while dragging, in Chrome on the RTX 3080 Ti: ABox 30,
   HingeBox 10, TypeTray 7, HobbyCase 2 (`node scripts/drag-bench.mjs draft` measures the Python + 3D part)
 
+- the stamp case, stampcaser merged in: an 11th type with its board editor, 3D, the shared packer (which now also
+  tries every part turned / upright, so it never needs more sheets than stampcaser did), undo / redo for every type,
+  logos through `serve.py` (2026-11-07, see `.grill/stamp-case-merge.md`). `tests/test_stampcase.py` checks every
+  existing case against stampcaser itself, board by board, kerf included.
+
 Not placed in 3D yet: Console2's panel springs, back-wall latches and latch clamps (8 small parts). They lie in front
 of the box. ABox's lid parts lie beside the box for the lid styles that have them.
 
-Next, in this order (agreed 2026-10-11, see `.grill/superboxespy-web-gui.md`):
-1. A hole editor on any face (pot, jack, button, USB-C, display presets; holes that hit joints turn red),
-   then a panel designer (text in your fonts, logos, SVG import, fills under the line-first rule), then sheet jobs
-   (several boxes on shared sheets).
-2. A grid editor for TrayLayout instead of the text box.
+Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
+1. Rest-piece cuts for every type (stampcaser's C07 frame layer: the rest wood falls apart into square rectangles).
+2. Files next to their `.box.json` (`serve.py` writes them) and a double-click on a `.box.json` opens it here.
+3. The face editor for all 11 types: text, logos, SVG engraving, then holes with keep-outs at joints.
+4. Retire stampcaser once a case has been cut from here.
+5. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
+   Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).
+6. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
 ## For development
 
@@ -172,9 +210,9 @@ python scripts/update_boxes.py [commit]                   # newer boxes.py, then
 | Path | What |
 |---|---|
 | `python/boxes/` | boxes.py, vendored unchanged (`UPSTREAM_COMMIT`) |
-| `python/superboxes/` | `catalog` (types, slider schema), `capture` (runs a generator and keeps each part, its walls' frames and their outlines), `sheets` (packing), `export` (LightBurn/SVG, mark, labels, sheet checks), `assembly` (3D placement, overlap check), `kerf` (per-axis compensation), `calibration`, `traylayout`, `api` (JSON for the worker) |
+| `python/superboxes/` | `catalog` (types, slider schema), `capture` (runs a generator and keeps each part, its walls' frames and their outlines), `sheets` (packing), `export` (LightBurn/SVG, mark, labels, sheet checks), `assembly` (3D placement, overlap check), `kerf` (per-axis compensation), `calibration`, `traylayout`, `api` (JSON for the worker); `stampcase/` (the stamp case: `model`, `layout`, `pack`, `magnets`, `labels`, `parts` = its boards as parts, `api`) |
 | `python/evlaser/` | copy of the eVlaser toolchain (`lbrn` writer, `machine` values, `geom`); see its `__init__` for the two changes |
-| `src/` | the page: `main` (state, wiring), `worker` + `py` (Pyodide in a web worker), `params` (sliders), `sheetview` (2D), `view3d` (three.js), `calibration`, `config`, `files`, `materials` |
+| `src/` | the page: `main` (state, wiring), `worker` + `py` (Pyodide in a web worker), `params` (sliders), `sheetview` (2D), `view3d` (three.js), `calibration`, `config`, `files`, `materials`, `stampcase` (the stamp case's side panel and board editor) |
 
 How the 3D knows where parts go: `capture` hooks boxes.py while it draws and records a frame per part:
 - **`rectangularWall`:** the wall's callback 0, which fires at its inner corner.

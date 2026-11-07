@@ -37,6 +37,44 @@ export interface Build {
   mark: string;
   notes?: string;
   assembly?: unknown;
+  stampcase?: StampData;       // StampCase only: what the board editor draws and hit-tests
+}
+
+// ------------------------------------------------------------------ the stamp case (python/superboxes/stampcase)
+export type Side = "left" | "right" | "bottom" | "top";
+export interface Pocket {
+  name: string; w: number; h: number; x: number; y: number;      // stamp size as placed, air not included
+  notch_side: Side; notch_end: "low" | "high"; label_pos: "notch" | "side" | "end"; id: string;
+  thickness?: number;                                            // optional stamp thickness, 0 = not given
+}
+export interface Block { x: number; y: number; size: number; rot: number; placed: boolean }
+export type BlockKey = "top_block" | "lid_title" | "lid_logo";
+/** A stamp case: the .box.json's params for generator "StampCase" (model.Case). */
+export interface Case {
+  project: string; pocket_boards: number; air: number; logo: string;
+  pockets: Pocket[]; magnets: [number, number][]; magnets_auto: boolean;
+  top_block: Block; lid_title: Block; lid_logo: Block;
+}
+export interface Problem { level: "error" | "warning"; text: string; refs: string[] }
+export interface StampData {
+  rect: [number, number, number, number];
+  origin: [number, number];                 // design = part coordinates + origin
+  boards: { key: string; title: string; part: number }[];
+  top_key: string;
+  pockets: { id: string; hole: ShapePoly[]; rect: [number, number, number, number]; label_box: ShapePoly[] | null;
+             label_fits: boolean; lid_band: ShapePoly[] | null }[];
+  magnets: [number, number][];
+  magnet_r: number;
+  blocks: Record<BlockKey, { region: ShapePoly[] | null; x: number; y: number; size: number; rot: number; placed: boolean }>;
+  problems: Problem[];
+  size: [number, number];
+  max_board: [number, number];
+  per_sheet: number;
+  sheets: number | null;
+  hint: [number, string, number] | null;    // (mm smaller, "narrower" | "shorter", sheets then)
+  depth: number;
+  logos: string[];
+  snap: number; air: number; web: number; magnet_wood: number;
 }
 
 export interface Param {
@@ -84,7 +122,8 @@ export interface BoxConfig {
   generator: string;
   boxes_version: string;
   params: Record<string, any>;
-  material: { key: string; thickness: number; fit: Fit; burn: number; burn_x?: number; burn_y?: number };
+  material: { key: string; thickness: number; fit: Fit; burn: number; burn_x?: number; burn_y?: number;
+              kerf_x?: number; kerf_y?: number };   // kerf: what a stamp case is cut with (kerf / 2, no fit)
   sheet: Sheet;
   layout: Placement[] | null;  // the hand-arranged layout, null = packed automatically
   options: Options;

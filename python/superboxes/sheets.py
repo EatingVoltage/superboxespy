@@ -78,22 +78,30 @@ ORDERS = (
 )
 
 
+# How parts may turn: each one as suits it best, or all turned / all upright where they fit. Turning every part
+# alike is what puts equal parts in a grid (stampcaser's boards: 4 a sheet turned, 2 upright).
+TURNS = ("free", "turned", "upright")
+
+
 def pack(sizes, sheet=A3, edge=M.EDGE, gap=M.GAP, locked=(), allow_rotate=True):
     """sizes: [(w, h)] per part index. locked: placements to keep as they are (hand-placed parts).
-    Returns (placements, too_big): placements for every part that fits, too_big = indices that never fit."""
+    Returns (placements, too_big): placements for every part that fits, too_big = indices that never fit.
+    Every part order is tried with every turn policy; the fewest sheets win, then the lowest last sheet (the
+    biggest clean offcut). Ties keep the first found, so "free" turning wins unless another is strictly better."""
     best = None
-    for order in ORDERS:
-        placements, too_big = _pack_once(sizes, sheet, edge, gap, locked, allow_rotate, order)
-        n = max((p["sheet"] for p in placements), default=-1) + 1
-        last = max((p["y"] + rotated_size(*sizes[p["part"]], p["rot"])[1]
-                    for p in placements if p["sheet"] == n - 1), default=0.0)
-        score = (n, last)
-        if best is None or score < best[0]:
-            best = (score, placements, too_big)
+    for turn in (TURNS if allow_rotate else ("upright",)):
+        for order in ORDERS:
+            placements, too_big = _pack_once(sizes, sheet, edge, gap, locked, allow_rotate, order, turn)
+            n = max((p["sheet"] for p in placements), default=-1) + 1
+            last = max((p["y"] + rotated_size(*sizes[p["part"]], p["rot"])[1]
+                        for p in placements if p["sheet"] == n - 1), default=0.0)
+            score = (n, last)
+            if best is None or score < best[0]:
+                best = (score, placements, too_big)
     return best[1], best[2]
 
 
-def _pack_once(sizes, sheet, edge, gap, locked, allow_rotate, order):
+def _pack_once(sizes, sheet, edge, gap, locked, allow_rotate, order, turn="free"):
     x0, y0, x1, y1 = area(sheet, edge)
     # every rectangle grows by the gap on its right and top; the bin grows by the same so the last
     # part may touch the edge margin
@@ -118,6 +126,10 @@ def _pack_once(sizes, sheet, edge, gap, locked, allow_rotate, order):
     for i in todo:
         w, h = sizes[i]
         orients = [(0, w, h)] + ([(90, h, w)] if allow_rotate and abs(w - h) > 1e-6 else [])
+        if turn != "free" and len(orients) == 2:
+            want = orients[1] if turn == "turned" else orients[0]
+            if want[1] <= x1 - x0 + 1e-6 and want[2] <= y1 - y0 + 1e-6:    # that way round fits the sheet
+                orients = [want]
         done = False
         for n, b in enumerate(bins):
             best = None
@@ -150,3 +162,25 @@ def offcut(placements, sizes, sheet, n, edge=M.EDGE):
             _w, h = rotated_size(*sizes[p["part"]], p["rot"])
             top = max(top, p["y"] + h)
     return max(0.0, sh - top - M.GAP)
+
+
+def keep_locked(sizes, layout, sheet):
+    """Hand-placed parts (placements) that are still inside the area and clear of each other: sizes may have changed
+    since they were placed. sizes: [(w, h)] per part index."""
+    keep = []
+    x0, y0, x1, y1 = area(sheet)
+    for pl in layout or []:
+        if pl.get("part", -1) >= len(sizes):
+            continue
+        w, h = rotated_size(*sizes[pl["part"]], pl["rot"])
+        if pl["x"] < x0 - 1e-3 or pl["y"] < y0 - 1e-3 or pl["x"] + w > x1 + 1e-3 or pl["y"] + h > y1 + 1e-3:
+            continue
+        clash = False
+        for q in keep:
+            qw, qh = rotated_size(*sizes[q["part"]], q["rot"])
+            if q["sheet"] == pl["sheet"] and pl["x"] < q["x"] + qw + M.GAP - 1e-3 and q["x"] < pl["x"] + w + M.GAP - 1e-3                     and pl["y"] < q["y"] + qh + M.GAP - 1e-3 and q["y"] < pl["y"] + h + M.GAP - 1e-3:
+                clash = True
+                break
+        if not clash:
+            keep.append({k: pl[k] for k in ("part", "sheet", "x", "y", "rot")})
+    return keep

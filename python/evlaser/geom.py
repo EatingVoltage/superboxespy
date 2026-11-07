@@ -284,7 +284,8 @@ def check_sheet(parts, sheet, name="sheet", edge=M.EDGE, gap=M.GAP, ref_layer=M.
             if it[0] == M.CUT and it[1] in ("poly", "circle"):
                 g = it[2] if it[1] == "poly" else Point(it[2]).buffer(it[3])
                 cuts.append((p.name, g))
-    outers = [(n, g) for n, g in cuts if not any(g.within(o.buffer(0.01)) for _, o in cuts if o is not g)]
+    near = [o.buffer(0.01) for _, o in cuts]
+    outers = [(n, g) for i, (n, g) in enumerate(cuts) if not any(g.within(b) for j, b in enumerate(near) if j != i)]
     for i in range(len(outers)):
         for j in range(i + 1, len(outers)):
             d = outers[i][1].distance(outers[j][1])
