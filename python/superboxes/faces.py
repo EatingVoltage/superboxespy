@@ -9,20 +9,27 @@ The editor works in the face's view: seen from outside, x to the right, y up, wh
 its back for the top and its front for the bottom (tip the box toward you to read it); (0, 0) is the lower-left corner
 of the part's outline. Items are mm in that view:
 
-    {"id", "kind": "text" | "logo" | "svg", "text", "logo" (a house logo's file name), "svg" (an imported SVG's
-     text, svgart.py), "name" (its file name), "size" (cap height, or a logo's or SVG's height, mm),
+    {"id", "kind": "text" | "logo" | "svg" | "hole", "text", "logo" (a house logo's file name), "svg" (an imported
+     SVG's text, svgart.py), "name" (its file name), "size" (cap height, or a logo's or SVG's height, mm),
      "bold", "style": "outline" | "hatch", "rot": 0 | 90 | 180 | 270,
+     a hole: "shape": "round" (with "d") | "rect" (with "w", "h", "r"), "part" (the library part it's for),
      "anchor": "tl" | "t" | "tr" | "l" | "c" | "r" | "bl" | "b" | "br", "dx", "dy"}
 
 The item's own anchor point (the same spot of its bounding box) sits (dx, dy) from the face's anchor point, so it
 keeps its place when the box changes size; text lines align to the anchor's side. An item must stay inside the free
 area: the outline less thickness + 1.5 mm from every edge (finger joints), as for the maker's mark.
+
+A hole is cut through the part (CUT): its size is the finished hole, the kerf taken care of like boxes.py's own holes,
+and it keeps HOLE_WEB of wood to the next hole. It becomes part of the part (with_holes), so the 3D, the sheets and
+the maker's mark see it; an engraving across a hole is red.
 """
+import copy
+
 from dataclasses import dataclass
 
 import numpy as np
 from shapely import affinity
-from shapely.geometry import MultiLineString, MultiPoint, MultiPolygon, Polygon, box
+from shapely.geometry import MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, box
 from shapely.ops import unary_union
 
 from evlaser import lbrn, machine as M, textures
@@ -38,6 +45,8 @@ ANCHORS = ("tl", "t", "tr", "l", "c", "r", "bl", "b", "br")
 HATCH = SC.TITLE_HATCH           # mm between hatch lines, +-45 degrees (the stamp case's lid title)
 LINE_GAP = 1.4                   # line pitch of multi-line text, in cap heights
 KEEP_OUT = 1.5                   # mm beyond the thickness kept clear along every edge (finger joints)
+HOLE_WEB = 2.0                   # mm of wood at least between two holes
+ARC = 0.5522847498               # cubic Bezier handle for a quarter circle
 
 
 @dataclass
@@ -170,6 +179,53 @@ def _svg(item, size, rot):
     return affinity.rotate(out, rot, origin=(0, 0)) if rot else out
 
 
+def _hole_dims(item):
+    """("round", r) or ("rect", w, h, r) of a hole as drawn on the face (turned a quarter: w and h swap)."""
+    if item.get("shape") == "rect":
+        w, h = max(0.5, float(item.get("w") or 10)), max(0.5, float(item.get("h") or 5))
+        if int(item.get("rot") or 0) % 180:
+            w, h = h, w
+        return "rect", w, h, min(max(0.0, float(item.get("r") or 0)), w / 2, h / 2)
+    return "round", max(0.25, float(item.get("d") or 6) / 2)
+
+
+def _hole_poly(dims, cx=0.0, cy=0.0, shrink=0.0):
+    if dims[0] == "round":
+        return Point(cx, cy).buffer(dims[1] - shrink, quad_segs=32)
+    _, w, h, r = dims
+    w, h, r = w - 2 * shrink, h - 2 * shrink, max(0.0, r - shrink)
+    core = box(cx - w / 2 + r, cy - h / 2 + r, cx + w / 2 - r, cy + h / 2 - r)
+    return core.buffer(r, quad_segs=16) if r > 1e-9 else core
+
+
+def _hole_sub(dims, cx, cy, shrink=0.0):
+    """The hole's cut path in the 'bez' format (start, [(c1, c2, end)], closed): a true circle, or a rectangle with
+    rounded corners, `shrink` inside the finished size."""
+    if dims[0] == "round":
+        r = dims[1] - shrink
+        k = ARC * r
+        pts = [((cx + r, cy + k), (cx + k, cy + r), (cx, cy + r)), ((cx - k, cy + r), (cx - r, cy + k), (cx - r, cy)),
+               ((cx - r, cy - k), (cx - k, cy - r), (cx, cy - r)), ((cx + k, cy - r), (cx + r, cy - k), (cx + r, cy))]
+        return (cx + r, cy), pts, True
+    _, w, h, r = dims
+    w, h, r = w - 2 * shrink, h - 2 * shrink, max(0.0, r - shrink)
+    x0, y0, x1, y1 = cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2
+    k = ARC * r
+    segs = [(None, None, (x1 - r, y0))]
+    if r:
+        segs.append(((x1 - r + k, y0), (x1, y0 + r - k), (x1, y0 + r)))
+    segs.append((None, None, (x1, y1 - r)))
+    if r:
+        segs.append(((x1, y1 - r + k), (x1 - r + k, y1), (x1 - r, y1)))
+    segs.append((None, None, (x0 + r, y1)))
+    if r:
+        segs.append(((x0 + r - k, y1), (x0, y1 - r + k), (x0, y1 - r)))
+    segs.append((None, None, (x0, y0 + r)))
+    if r:
+        segs.append(((x0, y0 + r - k), (x0 + r - k, y0), (x0 + r, y0)))
+    return (x0 + r, y0), segs, True
+
+
 def _spot(bounds, anchor):
     """The anchor's point on a rectangle (x0, y0, x1, y1)."""
     x0, y0, x1, y1 = bounds
@@ -178,8 +234,9 @@ def _spot(bounds, anchor):
 
 
 def place(item, face):
-    """The item on the face, view coordinates: (polygons, lines, bounds) or None when it draws nothing."""
-    polys, lines = _block(item)
+    """The item on the face, view coordinates: (polygons, lines, bounds) or None when it draws nothing. A hole's
+    polygon is the hole itself."""
+    polys, lines = (_hole_poly(_hole_dims(item)), MultiLineString()) if item.get("kind") == "hole" else _block(item)
     geo = [g for g in (polys, lines) if not g.is_empty]
     if not geo:
         return None
@@ -205,12 +262,32 @@ def _round(g):
 def decorate(parts, asm, faces_req, t):
     """The face editor's items as decorations: ({part index: [(layer, lines)]} in part coordinates, for the sheets,
     the 3D and LightBurn; {role: face info} for the editor: the face's size, outline, free area and what covers it,
-    and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face})."""
+    and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face};
+    {part index: [(dims, centre)]} the holes, part coordinates, for with_holes)."""
     faces = find(parts, asm, t)
-    deco, info = {}, {}
+    deco, info, holes = {}, {}, {}
     for role, face in faces.items():
         items_out = []
-        for item in (faces_req or {}).get(role, []):
+        reqs = (faces_req or {}).get(role, [])
+        # the holes first: an engraving across one is red
+        cut = []
+        for item in (it for it in reqs if it.get("kind") == "hole"):
+            got = place(item, face)
+            if got:
+                cut.append((item, got[0], got[2]))
+        here = []
+        for item, poly, bounds in cut:
+            others = [q for it, q, _b in cut if it is not item]
+            bad = (not face.free.contains(poly)
+                   or any(poly.distance(q) < HOLE_WEB - 1e-6 for q in others))
+            dims = _hole_dims(item)
+            centre = face.to_part(Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
+            holes.setdefault(face.part, []).append((_turned(dims, face), (centre.x, centre.y)))
+            here.append(poly)
+            items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad, "hole": True,
+                              "lines": _round(_outline_lines(poly))})
+        holes_view = unary_union(here).buffer(1.0) if here else None
+        for item in (it for it in reqs if it.get("kind") != "hole"):
             try:
                 got = place(item, face)
             except ValueError as e:                     # an imported file that isn't SVG
@@ -221,14 +298,47 @@ def decorate(parts, asm, faces_req, t):
                 continue
             polys, lines, bounds = got
             engraved = unary_union([g for g in (_outline_lines(polys), lines) if not g.is_empty])
-            bad = not face.free.contains(box(*bounds))
+            bad = not face.free.contains(box(*bounds)) or (holes_view is not None and holes_view.intersects(engraved))
             deco.setdefault(face.part, []).append((M.LINE, face.to_part(engraved)))
             items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad,
                               "lines": _round(engraved)})
         info[role] = {"part": face.part, "w": round(face.w, 2), "h": round(face.h, 2),
                       "outline": _rings(face.outline), "free": _rings(face.free), "covered": _rings(face.covered),
                       "items": items_out, "fixed": []}
-    return deco, info, faces
+    return deco, info, faces, holes
+
+
+def _turned(dims, face):
+    """A hole's dimensions in part coordinates: the face's view is the part turned by quarters, so w and h swap
+    when it's turned a quarter."""
+    if dims[0] == "rect" and abs(face.rot[0, 0]) < 0.5:
+        return ("rect", dims[2], dims[1], dims[3])
+    return dims
+
+
+def with_holes(parts, holes, per_axis, burn):
+    """The parts with the face editor's holes cut, as copies (the parts are cached between builds). Each hole goes
+    into the part's shape (the 3D, the maker's mark) and its cut paths: drawn at its finished size when the export
+    compensates the kerf per axis, else `burn` inside it, as boxes.py draws its own holes."""
+    if not holes:
+        return parts
+    out = list(parts)
+    shrink = 0.0 if per_axis else burn
+    for i, hs in holes.items():
+        p = copy.copy(parts[i])
+        p.subpaths = {k: list(v) for k, v in p.subpaths.items()}
+        cut = []
+        for dims, (cx, cy) in hs:
+            p.subpaths[M.CUT].append(_hole_sub(dims, cx, cy, shrink))
+            cut.append(_hole_poly(dims, cx, cy))
+        region = unary_union(cut)
+        p.shape = p.shape.difference(region)
+        if getattr(p, "_outline_from_cuts", False):
+            p._outline = None
+        elif getattr(p, "_outline", None) is not None:
+            p._outline = p._outline.difference(unary_union([_hole_poly(d, x, y, shrink) for d, (x, y) in hs]))
+        out[i] = p
+    return out
 
 
 def footprints(deco):
@@ -259,7 +369,8 @@ def logos():
 
 def problems(info):
     """Text for the export's refusal: items that run into an edge or a finger joint, files that aren't SVG."""
-    return ["An item on the %s %s" % (role, "can't be read: " + it["error"] if it.get("error")
-                                      else "runs into its edge, a finger joint or what covers it")
+    return ["%s on the %s %s" % ("A hole" if it.get("hole") else "An item", role,
+                                 "can't be read: " + it["error"] if it.get("error")
+                                 else "runs into its edge, a finger joint, a hole or what covers it")
             for role, f in info.items() for it in f["items"] if it["bad"]]
 

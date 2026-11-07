@@ -29,6 +29,13 @@ kit; the process is discussed along the way, not settled up front.
   may need to lie outside up), every type, SVG import and holes follow once the cut looks right. Rejected: text on
   every face of every type first, everything before any cut.
 
+- Decision (2026-11-08): holes are for **device panels** first: part presets plus a plain round and a rounded
+  rectangle of any size. Rejected for now: product-box cut-outs (thumb notch, window, hand hold), plain shapes only.
+- Decision (2026-11-08): the presets come from Samuel's **parts library** (DeviceWizard's eatingVoltageLibrary), read
+  at runtime by `serve.py` like the logos: every part's latest revision, its confirmed front-plate hole or window.
+  Private, never in the repo, always current. Rejected: a built-in table (it drifts), plain shapes only, and for now
+  turning the library's jack / USB-C case notches into wall holes (needs the board's height in the box).
+
 ## Progress
 - 2026-11-07, the first slice: ABox's over-the-top lid sits on the box in the 3D (lifts off, no clashes); `faces.py`
   finds the closed box's six faces and turns items into LINE engraving on the part, unmirrored (the assembly already
@@ -45,7 +52,14 @@ kit; the process is discussed along the way, not settled up front.
   across x or y is now placed turned instead (the same solid); the three that aren't (Console's and Console2's right
   sides, Console2's back wall) stay flagged and get no face: they'd need cutting mirrored.
 
+- 2026-11-08, holes: the library's 18 confirmed panel holes and windows as presets (`serve.py` /api/parts), plus round
+  and rounded rectangle; cut through the part on a copy (the parts are cached), in the 3D and on the sheets.
+
 ## Defaults set without asking
+- A hole's size is the finished hole: drawn at it when the export compensates the kerf per axis, else the burn inside
+  it, as boxes.py's own holes. True circles and rounded corners (Bezier) in LightBurn.
+- At least 2 mm of wood between two holes (HOLE_WEB); an engraving across a hole is red. Duplicating a hole puts the
+  copy beside it (a row of pots), text below.
 - Anchor distances are measured from the finished box's outside edges (what a ruler reads on the closed box). The
   finger-joint strip along a joined edge (thickness + 1.5 mm) is a keep-out: it turns an item red, never moves it.
 - Text alignment follows the anchor: left anchors left-align, centre centres, right anchors right-align.
@@ -85,4 +99,4 @@ kit; the process is discussed along the way, not settled up front.
 ## Out of scope (for now)
 - Inside faces and two-sided jobs.
 - Fonts other than eV Sans.
-- Holes and cut-outs (after text, logos and SVG).
+- Product-box cut-outs (thumb notch, window, hand hold) and wall holes for edge connectors (jacks, USB-C).

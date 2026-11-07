@@ -71,6 +71,18 @@ const ringsD = (rings: number[][][], dx = 0, dy = 0) =>
 const linesD = (lines: number[][][], dx = 0, dy = 0) =>
   lines.map((l) => "M" + l.map(([x, y]) => `${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join("L")).join("");
 
+/** A hole preset from the parts library (serve.py /api/parts): its confirmed panel hole or window. */
+interface HolePreset { code: string; name: string; kind: "hole" | "window"; shape: "round" | "rect"; d?: number; w?: number; h?: number; r?: number }
+
+let presets: Promise<HolePreset[]> | null = null;
+function holePresets(): Promise<HolePreset[]> {
+  presets ??= fetch("/api/parts").then((r) => (r.ok ? r.json() : [])).catch(() => []);
+  return presets;
+}
+
+const holeSize = (p: { shape?: string; d?: number; w?: number; h?: number; r?: number }) =>
+  p.shape === "rect" ? `${p.w} × ${p.h}${p.r ? `, r ${p.r}` : ""}` : `Ø${p.d}`;
+
 let nextId = 0;
 const newId = () => `i${Date.now().toString(36)}${(nextId++).toString(36)}`;
 
@@ -173,7 +185,7 @@ export class FaceEditor {
       }
       const [ox, oy] = d && d.id === it.id ? [d.dx, d.dy] : [0, 0];
       const [x0, y0, x1, y1] = it.bounds;
-      g.append(svg("path", { d: linesD(it.lines, ox, oy), class: "board-line" }));
+      g.append(svg("path", { d: linesD(it.lines, ox, oy), class: it.hole ? "board-cut" : "board-line" }));
       const bad = d && d.id === it.id && d.moved ? !this.clear(f, [x0 + ox, y0 + oy, x1 + ox, y1 + oy]) : it.bad;
       g.append(svg("rect", { x: x0 + ox - 1, y: y0 + oy - 1, width: x1 - x0 + 2, height: y1 - y0 + 2, "data-id": it.id,
         class: `hit face-item${this.selected === it.id ? " sel" : ""}${bad ? " bad" : ""}` }));
@@ -298,6 +310,36 @@ export class FaceEditor {
     input.click();
   }
 
+  /** A hole at the face's centre: `p` a library preset, or a plain round / rectangle. */
+  addHole(p: Partial<HolePreset> & { shape: "round" | "rect" }) {
+    const item: FaceItem = { id: newId(), kind: "hole", shape: p.shape, rot: 0, anchor: "c", dx: 0, dy: 0, size: 0,
+      ...(p.shape === "rect" ? { w: p.w ?? 20, h: p.h ?? 10, r: p.r ?? 1 } : { d: p.d ?? 6 }),
+      ...(p.name ? { part: p.name } : {}) };
+    const faces = structuredClone(this.host.faces());
+    faces[this.tab] = [...(faces[this.tab] ?? []), item];
+    this.selected = item.id;
+    this.host.commit(faces);
+  }
+
+  private holeMenu(): HTMLSelectElement {
+    const sel = h("select", { "aria-label": "Add a hole", title: "A hole through the wood (CUT), at its finished size: the kerf is taken care of" }) as HTMLSelectElement;
+    sel.append(h("option", { value: "", selected: true, disabled: true }, "Add hole…"),
+      h("option", { value: "round" }, "Round, any size"), h("option", { value: "rect" }, "Rectangle, any size"));
+    const list: HolePreset[] = [];
+    holePresets().then((ps) => {
+      list.push(...ps);
+      const group = h("optgroup", { label: ps.length ? "Parts library" : "Parts library: none (start the app with serve.py)" });
+      ps.forEach((p, k) => group.append(h("option", { value: `p${k}` }, `${p.name}${p.kind === "window" ? " (window)" : ""} — ${holeSize(p)}`)));
+      sel.append(group);
+    });
+    sel.onchange = () => {
+      const v = sel.value;
+      if (v === "round" || v === "rect") this.addHole({ shape: v });
+      else if (v.startsWith("p")) this.addHole(list[Number(v.slice(1))]);
+    };
+    return sel;
+  }
+
   add(kind: "text" | "logo") {
     const f = this.info()[this.tab];
     if (!f) return;
@@ -324,7 +366,10 @@ export class FaceEditor {
   private duplicate() {
     const it = this.items().find((i) => i.id === this.selected);
     if (!it) return;
-    const copy = { ...structuredClone(it), id: newId(), dy: it.dy - Math.max(4, it.size * 1.5) };
+    // text below the original, a hole beside it (a row of pots)
+    const copy = it.kind === "hole"
+      ? { ...structuredClone(it), id: newId(), dx: it.dx + (it.shape === "rect" ? it.w ?? 10 : it.d ?? 6) + 4 }
+      : { ...structuredClone(it), id: newId(), dy: it.dy - Math.max(4, it.size * 1.5) };
     const faces = structuredClone(this.host.faces());
     faces[this.tab] = [...(faces[this.tab] ?? []), copy];
     this.selected = copy.id;
@@ -369,6 +414,7 @@ export class FaceEditor {
         btn("Add logo", "An eV logo, engraved", () => this.add("logo")),
         btn("Import SVG", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +
           "The file is kept in the box.", () => this.importSvg()),
+        this.holeMenu(),
         h("span", { class: "hint" }, `${TITLE[this.tab]}, seen from outside: ${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm. ` +
           "Drag an item: it keeps its place from the nearest corner, edge or the centre when the box changes size. " +
           "The dashed line keeps clear of the edges and finger joints" +
@@ -377,15 +423,16 @@ export class FaceEditor {
       this.bar.replaceChildren(...kids);
       return;
     }
-    const num = (value: number, label: string, set: (v: number) => void) => {
-      const i = h("input", { type: "number", min: 1, step: 0.5, value: value, class: "num", "aria-label": label }) as HTMLInputElement;
+    const num = (value: number, label: string, set: (v: number) => void, step = 0.5, min = 1) => {
+      const i = h("input", { type: "number", min, step, value: value, class: "num", "aria-label": label }) as HTMLInputElement;
       i.onchange = () => {
         const v = Number(i.value);
-        if (v > 0) set(v);
+        if (v >= min) set(v);
       };
       return i;
     };
-    const where = `${ANCHOR_NAME[it.anchor]}${it.dx || it.dy ? `, ${Math.abs(it.dx)} / ${Math.abs(it.dy)} mm` : ""}`;
+    const mm2 = (v: number) => +Math.abs(v).toFixed(2);
+    const where = `${ANCHOR_NAME[it.anchor]}${it.dx || it.dy ? `, ${mm2(it.dx)} / ${mm2(it.dy)} mm` : ""}`;
     const got = f.items.find((i) => i.id === it.id);
     const state = got?.error ? h("span", { class: "bad-text" }, `can't be read: ${got.error}`)
       : got?.bad ? h("span", { class: "bad-text" }, "runs into an edge, a finger joint or what covers it") : "";
@@ -406,6 +453,16 @@ export class FaceEditor {
       bold.onchange = () => this.change(it.id, { bold: bold.checked });
       kids.push(text, h("span", {}, "cap"), num(it.size, "Cap height, mm", (v) => this.change(it.id, { size: v })),
         h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), styleSel());
+    } else if (it.kind === "hole") {
+      kids.push(h("b", { title: "Cut through, at its finished size" }, it.part ?? (it.shape === "rect" ? "Rectangle hole" : "Round hole")));
+      if (it.shape === "rect") {
+        kids.push(num(it.w ?? 20, "Width, mm", (v) => this.change(it.id, { w: v }), 0.01, 0.5), h("span", {}, "×"),
+          num(it.h ?? 10, "Height, mm", (v) => this.change(it.id, { h: v }), 0.01, 0.5), h("span", { class: "unit" }, "mm, r"),
+          num(it.r ?? 0, "Corner radius, mm", (v) => this.change(it.id, { r: v }), 0.05, 0));
+      } else {
+        kids.push(h("span", {}, "Ø"), num(it.d ?? 6, "Diameter, mm", (v) => this.change(it.id, { d: v }), 0.01, 0.5));
+      }
+      kids.push(h("span", { class: "unit" }, "mm"));
     } else if (it.kind === "svg") {
       kids.push(h("b", { title: "An imported SVG, kept in the box" }, it.name ?? "SVG"), h("span", {}, "height"),
         num(it.size, "Height, mm", (v) => this.change(it.id, { size: v })), h("span", { class: "unit" }, "mm"),
@@ -419,8 +476,10 @@ export class FaceEditor {
       kids.push(sel, h("span", {}, "height"), num(it.size, "Logo height, mm", (v) => this.change(it.id, { size: v })),
         h("span", { class: "unit" }, "mm"));
     }
-    kids.push(btn("Rotate", "R (Shift+R the other way)", () => this.change(it.id, { rot: (((it.rot ?? 0) + 90) % 360) as FaceItem["rot"] })),
-      btn("Duplicate", "Ctrl+D", () => this.duplicate()), btn("Delete", "Del", () => this.remove()),
+    if (!(it.kind === "hole" && it.shape !== "rect")) {     // a round hole looks the same turned
+      kids.push(btn("Rotate", "R (Shift+R the other way)", () => this.change(it.id, { rot: (((it.rot ?? 0) + 90) % 360) as FaceItem["rot"] })));
+    }
+    kids.push(btn("Duplicate", "Ctrl+D", () => this.duplicate()), btn("Delete", "Del", () => this.remove()),
       h("span", { class: "hint" }, where), state);
     this.bar.replaceChildren(...kids);
   }

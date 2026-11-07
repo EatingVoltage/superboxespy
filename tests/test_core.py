@@ -441,6 +441,57 @@ class Faces(unittest.TestCase):
         req["layout"] = api.build(req)["placements"]
         self.assertIn("can't be read", api.export(req)["error"])
 
+    def hole_req(self, items, mat=MAT):
+        req = self.req()
+        req["material"] = mat
+        req["faces"] = {"front": items}
+        return req
+
+    def test_holes_cut_through_at_their_finished_size(self):
+        import math
+        pot = {"id": "pot", "kind": "hole", "shape": "round", "d": 7.2, "anchor": "c", "dx": -30, "dy": -10}
+        oled = {"id": "oled", "kind": "hole", "shape": "rect", "w": 24.85, "h": 9.49, "r": 0.71, "anchor": "c",
+                "dx": 30, "dy": -10}
+        plain = api.build(self.hole_req([]))
+        b = api.build(self.hole_req([pot, oled]))
+        f = b["faces"]["front"]
+        self.assertFalse(any(i["bad"] for i in f["items"]))
+        part, before = b["parts"][f["part"]], plain["parts"][f["part"]]
+        holes = math.pi * 3.6 ** 2 + 24.85 * 9.49 - (4 - math.pi) * 0.71 ** 2
+        self.assertAlmostEqual(before["area"] - part["area"], holes, delta=0.2)    # the 3D's wood has them
+        # boxes.py burns its own paths: a hole's cut path runs the burn inside it, a true circle (four arcs)
+        circle = part["paths"]["2"][-2]
+        self.assertEqual(len(circle["segs"]), 4)
+        xs = [circle["start"][0]] + [s[-2] for s in circle["segs"]]
+        self.assertAlmostEqual((max(xs) - min(xs)) / 2, 3.6 - MAT["burn"], places=3)
+        # the parts are cached between builds: a build without holes has none
+        self.assertEqual(api.build(self.hole_req([]))["parts"][f["part"]]["area"], before["area"])
+        # per axis, the export grows the wood by the burn: the hole's cut path is that much inside, per axis
+        req = self.hole_req([pot], {"key": "poplar3.6", "thickness": 3.6, "burn": 0.1675, "burn_x": 0.185,
+                                    "burn_y": 0.15})
+        b = api.build(req)
+        req["layout"] = b["placements"]
+        self.assertTrue(api.export(req)["ok"])
+        parts, info = api._render(req)
+        parts = api._decorations(req, parts, assembly.assemble("ABox", parts, 3.6, req["layout"]), info)[0]
+        pi = b["faces"]["front"]["part"]
+        pl = next(q for q in req["layout"] if q["part"] == pi)
+        region = X.placed_shape(parts[pi], pl, info["comp"])
+        hole = min(region.interiors, key=lambda r: abs(r.envelope.area - 7.2 ** 2)).envelope.bounds
+        w, h = hole[2] - hole[0], hole[3] - hole[1]               # machine axes, however the part lies
+        self.assertAlmostEqual(w, 7.2 - 2 * 0.185, delta=0.02)
+        self.assertAlmostEqual(h, 7.2 - 2 * 0.15, delta=0.02)
+
+    def test_holes_keep_wood_between_them_and_engraving_off_them(self):
+        pot = {"id": "a", "kind": "hole", "shape": "round", "d": 7.2, "anchor": "c", "dx": -30, "dy": -10}
+        near = dict(pot, id="b", dx=-21)                        # 9 mm apart: 1.8 mm of wood
+        text = {"id": "t", "kind": "text", "text": "VOL", "size": 4, "anchor": "c", "dx": -30, "dy": -10}
+        got = {i["id"]: i["bad"] for i in api.build(self.hole_req([pot, near, text]))["faces"]["front"]["items"]}
+        self.assertEqual(got, {"a": True, "b": True, "t": True})
+        got = {i["id"]: i["bad"] for i in api.build(self.hole_req([pot, dict(near, dx=-19), dict(text, dy=2)]))
+               ["faces"]["front"]["items"]}
+        self.assertEqual(got, {"a": False, "b": False, "t": False})
+
     def test_the_lid_is_engraved_as_seen_from_outside(self):
         req = self.req(items=[{"id": "t", "kind": "text", "text": "CANVAS", "size": 12, "anchor": "c"}])
         b = api.build(req)

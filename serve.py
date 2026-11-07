@@ -49,6 +49,9 @@ OPEN_LIGHTBURN = "/api/open-lightburn"
 BOX = "/api/box"
 LOGOS = "/api/logos"
 LOGO_DIR = r"C:\Projects\eating voltage Fonts\logos"
+PARTS = "/api/parts"
+# The eatingVoltage parts library (DeviceWizard's, private): where DeviceWizard keeps it on every PC
+PARTS_DIR = os.path.join(os.path.expanduser("~"), "eatingVoltageLibrary")
 LIGHTBURN_EXE = [r"C:\Program Files\LightBurn\LightBurn.exe", r"C:\Program Files (x86)\LightBurn\LightBurn.exe"]
 # never searched for the box folder: system folders, caches, repos
 SKIP_DIRS = {"windows", "program files", "program files (x86)", "programdata", "appdata", "system volume information",
@@ -66,10 +69,28 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         path = urllib.parse.unquote(self.path.split("?")[0])
+        if path == PARTS:
+            self.send_parts()
+            return
         if path == LOGOS or path.startswith(LOGOS + "/"):
             self.send_logo(path[len(LOGOS) + 1:])
             return
         super().do_GET()
+
+    def send_parts(self):
+        """GET /api/parts: the parts library's confirmed panel holes, as hole presets for the face editor
+        (part_holes). To this PC's own page only: the library is private."""
+        host = self.headers.get("Host", "")
+        port = self.server.server_address[1]
+        if host not in ("localhost:%d" % port, "127.0.0.1:%d" % port):
+            self.send_error(403)
+            return
+        body = json.dumps(part_holes()).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def send_logo(self, name):
         """GET /api/logos: the house logos' names (JSON); /api/logos/<name>.svg: one of them. The logos are private and
@@ -377,6 +398,53 @@ def open_in_lightburn(req, launch=None):
     return {"ok": False, "need_root": True,
             "error": "Couldn't find the folder \"%s\" holding %s" % (folder, "/".join(rel))
                      + (" (not in %s)" % hint if hint else "")}
+
+
+# ------------------------------------------------------------------ hole presets from the parts library
+# The face editor's device-panel holes come from Samuel's parts library (DeviceWizard's eatingVoltageLibrary): each
+# part's latest published revision, its frontplate_hole or frontplate_window when confirmed (.grill/face-editor.md).
+# Only the shape's size matters here (where the part's pins sit relative to it is DeviceWizard's business).
+def _hole_shape(v):
+    """A library shape (nanometres) as {"shape": "round", "d"} or {"shape": "rect", "w", "h", "r"} in mm; None for
+    others."""
+    if not isinstance(v, dict):
+        return None
+    if v.get("type") == "circle" and isinstance(v.get("r"), (int, float)):
+        return {"shape": "round", "d": round(2 * v["r"] / 1e6, 3)}
+    lo, hi = v.get("min"), v.get("max")
+    if isinstance(lo, dict) and isinstance(hi, dict):
+        radii = [r for r in v.get("radii") or [0] if isinstance(r, (int, float))] or [0]
+        return {"shape": "rect", "w": round((hi["x"] - lo["x"]) / 1e6, 3), "h": round((hi["y"] - lo["y"]) / 1e6, 3),
+                "r": round(max(radii) / 1e6, 3)}
+    return None
+
+
+def part_holes(root=None):
+    """[{"code", "name", "kind": "hole" | "window", shape fields}] for every part with a confirmed panel hole or
+    window, sorted by name; [] without the library."""
+    base = os.path.join(root or PARTS_DIR, "items", "part")
+    out = []
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return out
+    for d in names:
+        try:
+            with open(os.path.join(base, d, "item.json"), encoding="utf-8") as f:
+                item = json.load(f)
+            revs = sorted(os.listdir(os.path.join(base, d, "revisions")))
+            if item.get("deprecated") or not revs:
+                continue
+            with open(os.path.join(base, d, "revisions", revs[-1], "revision.json"), encoding="utf-8") as f:
+                props = (json.load(f).get("data") or {}).get("properties") or {}
+        except (OSError, ValueError):
+            continue
+        for key, kind in (("frontplate_hole", "hole"), ("frontplate_window", "window")):
+            prop = props.get(key) or {}
+            shape = _hole_shape(prop.get("value")) if prop.get("status") == "confirmed" else None
+            if shape:
+                out.append({"code": item.get("code", d), "name": item.get("name", d), "kind": kind, **shape})
+    return sorted(out, key=lambda h: h["name"].lower())
 
 
 # ------------------------------------------------------------------ a box beside its own file

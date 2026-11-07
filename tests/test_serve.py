@@ -164,6 +164,39 @@ class BoxBesideItsFile(unittest.TestCase):
         self.assertEqual(urllib.parse.unquote(h[6:]), self.home)
 
 
+class HolePresets(unittest.TestCase):
+    """GET /api/parts: the parts library's confirmed panel holes and windows, in mm."""
+
+    def part(self, root, name, props, deprecated=False, revs=("0001",)):
+        d = os.path.join(root, "items", "part", name)
+        os.makedirs(d)
+        with open(os.path.join(d, "item.json"), "w", encoding="utf-8") as f:
+            json.dump({"code": name, "name": name.upper(), "deprecated": deprecated}, f)
+        for r in revs:
+            os.makedirs(os.path.join(d, "revisions", r))
+            with open(os.path.join(d, "revisions", r, "revision.json"), "w", encoding="utf-8") as f:
+                json.dump({"data": {"properties": props}}, f)
+
+    def test_confirmed_holes_and_windows_only(self):
+        circle = {"type": "circle", "c": {"x": 0, "y": 0}, "r": 3593500}
+        rect = {"type": "rect", "min": {"x": 4445000, "y": -4745000}, "max": {"x": 29295000, "y": 4745000},
+                "radii": [710000, 710000, 710000, 710000]}
+        with tempfile.TemporaryDirectory() as root:
+            self.part(root, "pot", {"frontplate_hole": {"status": "confirmed", "value": circle}})
+            self.part(root, "oled", {"frontplate_hole": {"status": "confirmed", "value": rect}})
+            self.part(root, "led", {"frontplate_window": {"status": "confirmed", "value": circle}})
+            self.part(root, "draft", {"frontplate_hole": {"status": "proposed", "value": circle}})
+            self.part(root, "old", {"frontplate_hole": {"status": "confirmed", "value": circle}}, deprecated=True)
+            self.part(root, "jack", {"frontplate_hole": {"status": "n/a", "value": None}})
+            got = serve.part_holes(root)
+        self.assertEqual(got, [
+            {"code": "led", "name": "LED", "kind": "window", "shape": "round", "d": 7.187},
+            {"code": "oled", "name": "OLED", "kind": "hole", "shape": "rect", "w": 24.85, "h": 9.49, "r": 0.71},
+            {"code": "pot", "name": "POT", "kind": "hole", "shape": "round", "d": 7.187},
+        ])
+        self.assertEqual(serve.part_holes(os.path.join(root, "gone")), [])
+
+
 @unittest.skipUnless(os.name == "nt", "Windows only")
 class FileDialog(unittest.TestCase):
     """The real Open / Save As dialog, on a desktop of its own that is never shown: it starts in the box's folder and

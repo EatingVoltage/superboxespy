@@ -90,7 +90,7 @@ def build(req):
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
                             info.get("attrs"))
-    deco, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
+    parts, deco, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
     warnings += w2
     out_parts = []
     for p in parts:
@@ -114,16 +114,17 @@ def _mark_part(face_info):
 
 
 def _decorations(req, parts, asm, info, draft=False):
-    """(deco, face info, warnings): what's engraved on each part - labels, the maker's mark (clear of the face
-    editor's items on its part) and the face editor's items (req["faces"]) - and the faces for the editor, each with
-    the mark's lines if it's there."""
-    face_deco, face_info, found = F.decorate(parts, asm, req.get("faces"), info["thickness"])
+    """(parts, deco, face info, warnings): the parts with the face editor's holes cut (copies), what's engraved on
+    each - labels, the maker's mark (clear of the face editor's items and holes on its part) and the face editor's
+    items (req["faces"]) - and the faces for the editor, each with the mark's lines if it's there."""
+    face_deco, face_info, found, holes = F.decorate(parts, asm, req.get("faces"), info["thickness"])
+    parts = F.with_holes(parts, holes, bool(info.get("comp")), float(info.get("burn") or 0.0))
     deco, warnings = X.decorations(parts, req.get("options") or {}, info["thickness"], req["generator"], draft,
                                    avoid=F.footprints(face_deco), default_part=_mark_part(face_info))
     F.show_fixed(face_info, found, deco)
     for i, items in face_deco.items():
         deco.setdefault(i, []).extend(items)
-    return deco, face_info, warnings
+    return parts, deco, face_info, warnings
 
 
 def export(req):
@@ -146,7 +147,7 @@ def export(req):
         return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
     opts = req.get("options") or {}
     asm = assembly.assemble(req["generator"], parts, info["thickness"], layout, float(sheet["w"]), info.get("attrs"))
-    deco, face_info, _w = _decorations(req, parts, asm, info)
+    parts, deco, face_info, _w = _decorations(req, parts, asm, info)
     bad = F.problems(face_info)
     if bad:
         return {"ok": False, "error": "Move these first:\n" + "\n".join(bad)}
