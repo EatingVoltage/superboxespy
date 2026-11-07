@@ -3,6 +3,38 @@ import numpy as np
 import shapely
 from shapely.geometry import box
 
+from evlaser.textures import _ring_edges
+
+
+def inside_grid(region, xs, ys):
+    """Which points of the grid xs x ys lie inside `region`, by scanlines: a point is inside when an odd number of ring
+    edges cross its row left of it; points on the boundary are outside. shapely.contains_xy's answer exactly, in a few
+    numpy passes: 3-7x faster on a stamp case's boards, where it was a fifth of a build (2026-11-07)."""
+    ny, nx = len(ys), len(xs)
+    ok = np.zeros((ny, nx), bool)
+    p0, p1 = _ring_edges(region)
+    if not len(p0):
+        return ok
+    cross = (p0[:, 1][None, :] <= ys[:, None]) != (p1[:, 1][None, :] <= ys[:, None])
+    r, e = np.nonzero(cross)
+    x = p0[e, 0] + (ys[r] - p0[e, 1]) / (p1[e, 1] - p0[e, 1]) * (p1[e, 0] - p0[e, 0])
+    diff = np.zeros((ny, nx + 1), np.int32)
+    np.add.at(diff, (r, np.searchsorted(xs, x, side="right")), 1)
+    ok = (np.cumsum(diff[:, :-1], 1) & 1).astype(bool)
+    # the boundary itself is outside (exact comparisons, as contains_xy's: a point 1e-16 inside is inside): points
+    # an edge crosses exactly, and points on an edge along their row
+    near = np.clip(np.searchsorted(xs, x), 0, nx - 1)
+    for k in (near, np.clip(near - 1, 0, nx - 1)):
+        hit = xs[k] == x
+        ok[r[hit], k[hit]] = False
+    flat = np.nonzero(p0[:, 1] == p1[:, 1])[0]
+    for i in flat:
+        row = np.nonzero(ys == p0[i, 1])[0]
+        if len(row):
+            lo, hi = sorted((p0[i, 0], p1[i, 0]))
+            ok[row[0], (xs >= lo) & (xs <= hi)] = False
+    return ok
+
 
 class FreeGrid:
     def __init__(self, free, rect, res=0.5):
@@ -12,7 +44,7 @@ class FreeGrid:
         self.ys = np.arange(y0, y1 + res / 2, res)
         X, Y = np.meshgrid(self.xs, self.ys)
         shapely.prepare(free)
-        self.ok = shapely.contains_xy(free, X, Y) if not free.is_empty else np.zeros(X.shape, bool)
+        self.ok = inside_grid(free, self.xs, self.ys) if not free.is_empty else np.zeros(X.shape, bool)
         self.X, self.Y = X, Y
 
     def _integral(self):

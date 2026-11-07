@@ -8,8 +8,9 @@ New and duplicated stamps go into free space without moving anything else.
 Spacing rules (the same the layout checks): holes C.WEB apart; a name strip never on a hole or on another strip."""
 import math
 
+import numpy as np
 from shapely import affinity
-from shapely.geometry import Polygon
+from shapely.geometry import GeometryCollection, Polygon
 from shapely.ops import unary_union
 
 from . import config as C
@@ -27,20 +28,36 @@ def _set(p, side, end, x, y):
 
 def _group(ps, air):
     """(holes, name strips) of some pockets; a name beside its notch needs no strip of its own."""
+    if len(ps) == 1:
+        p = ps[0]
+        return S.hole(p, air), S.strip(p, air) if p.label_pos != "notch" else Polygon()
     holes = unary_union([S.hole(p, air) for p in ps]) if ps else Polygon()
     strips = [S.strip(p, air) for p in ps if p.label_pos != "notch"]
     return holes, unary_union(strips) if strips else Polygon()
 
 
+def _box_gap(a, b):
+    """How far apart two bounding boxes are (0 when they touch or overlap): no point of the shapes is nearer."""
+    return math.hypot(max(b[0] - a[2], a[0] - b[2], 0.0), max(b[1] - a[3], a[1] - b[3], 0.0))
+
+
+def _box_overlap(a, b):
+    """The area two bounding boxes share: the shapes in them can't share more."""
+    return max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+
+
 def _clear(a, b):
-    """May group a sit where it is next to group b?"""
+    """May group a sit where it is next to group b? The bounding boxes answer most asks without the geometry (exactly:
+    a box gap of WEB means the holes are at least that far apart, boxes that share no area hold shapes that share
+    none)."""
     (ha, sa), (hb, sb) = a, b
     if ha.is_empty or hb.is_empty:
         return True
-    if ha.distance(hb) < C.WEB - 1e-6:
+    if _box_gap(ha.bounds, hb.bounds) < C.WEB - 1e-6 and ha.distance(hb) < C.WEB - 1e-6:
         return False
     for g, h in ((sa, hb), (ha, sb), (sa, sb)):
-        if not g.is_empty and not h.is_empty and g.intersection(h).area > 1e-6:
+        if (not g.is_empty and not h.is_empty and _box_overlap(g.bounds, h.bounds) > 1e-6
+                and g.intersection(h).area > 1e-6):
             return False
     return True
 
@@ -84,12 +101,16 @@ def _row(pockets, air, mode):
             x += _gap(pockets[k - 1], p, alternate)
         p.x = x
         x += p.hole_size(air)[0]
-    # the analytic gaps never need more, but nudge if they do
-    for k in range(1, len(pockets)):
-        before = _group(pockets[:k], air)
-        while not _clear(_group([pockets[k]], air), before):
+    # the analytic gaps never need more, but nudge if they do: each pocket against each one before it (the same as
+    # against their union, without building it per pocket)
+    done = []
+    for k, p in enumerate(pockets):
+        g = _group([p], air)
+        while k and not all(_clear(g, q) for q in done):
             for q in pockets[k:]:
                 q.x += 0.5
+            g = _group([p], air)
+        done.append(g)
     return _group(pockets, air)
 
 
@@ -120,13 +141,17 @@ def _stack(rows):
 
 
 def _board_of(case, pockets):
+    """The board's size for these pockets. board_rect reads only bounds and the largest x + y, the same for a plain
+    collection of the shapes as for their union, so none is built (the unions were a third of a Re-pack)."""
     air = case.air
     mark = mark_text()
-    holes, strips = _group(pockets, air)
-    content = unary_union([S.footprint(p, air) for p in pockets])
-    top = top_block_geo(case, *auto_top_block(case, content.bounds, mark), mark)
-    extra = [(strips, C.TEXT_EDGE - C.TEXT_CUT)] if not strips.is_empty else []
-    x0, y0, x1, y1 = board_rect(unary_union([holes, top.region]), extra)
+    holes = [S.hole(p, air) for p in pockets]
+    strips = [S.strip(p, air) for p in pockets if p.label_pos != "notch"]
+    feet = np.array([S.footprint(p, air).bounds for p in pockets])
+    content = (feet[:, 0].min(), feet[:, 1].min(), feet[:, 2].max(), feet[:, 3].max())
+    top = top_block_geo(case, *auto_top_block(case, content, mark), mark)
+    extra = [(GeometryCollection(strips), C.TEXT_EDGE - C.TEXT_CUT)] if strips else []
+    x0, y0, x1, y1 = board_rect(GeometryCollection(holes + [top.region]), extra)
     return x1 - x0, y1 - y0
 
 

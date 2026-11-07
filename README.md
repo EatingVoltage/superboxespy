@@ -229,9 +229,10 @@ Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
    starter-kit box's lid waits for its test cut (`.grill/face-editor.md`). The stamp case keeps its own board editor
    for now.
 2. Retire stampcaser once a case has been cut from here.
-3. A stamp-case build in under 300 ms in Chrome: 0.2 s for 9 stamps, 0.32 s for 16, Re-pack of 16 2.7 s (Pyodide under
-   Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).
-4. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
+3. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
+
+A stamp-case build after an edit meets its 300 ms: 0.19 s for 9 stamps, 0.25-0.27 s for 16; Re-pack of 16 takes
+1.7 s (Pyodide under Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07).
 
 ## For development
 

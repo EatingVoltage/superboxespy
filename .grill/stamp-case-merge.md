@@ -102,6 +102,9 @@ Steps 1-5 and the conversion (7) done 2026-11-07, with logos through `serve.py`.
   a first pass (scanline hatch, STRtree name checks, cached glyph outlines, one summed-area table per grid): native
   1.36 s -> 0.14 s for ELEMENTS (9 stamps); Pyodide 1.2 s -> 0.2 s, 16 stamps 0.32 s, Re-pack of 16 2.7 s
   (repeated on an idle PC: a first run under load read 0.5 / 0.75 s). 9 stamps meet the target; 16 are just over.
+  Answered 2026-11-07, second pass, all in Python: the free-space grids by scanline instead of contains_xy (the same
+  points exactly), the boards' paths straight to JSON; 16 stamps 0.25-0.27 s in Pyodide, 9 stamps 0.19 s. Re-pack of
+  16: bounding boxes answer most clearance asks, no unions just for a size; 2.8 s -> 1.7 s, the same layouts.
 - How "Auto-Launch Files in Running Copy" behaves when LightBurn is open (untested in both apps).
 
 ## Out of scope

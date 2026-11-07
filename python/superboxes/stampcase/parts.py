@@ -14,7 +14,7 @@ from shapely.ops import unary_union
 from evlaser import geom as G
 from evlaser import machine as M
 
-from ..capture import _poly_json, _r, _sub_json
+from ..capture import _poly_json, _r
 from . import config as C
 from . import shapes as S
 
@@ -37,23 +37,32 @@ def _lines(g):
     return list(g.geoms) if hasattr(g, "geoms") else [g]
 
 
-def _subpaths(items):
-    """[(start, [(None, None, end)], closed)] per item, in the evlaser 'bez' format the sheet view reads."""
-    out = []
+def _polylines(items):
+    """(points (n, 2), closed) of every ring and line of the items, as the laser draws them."""
     for _role, _layer, kind, *data in items:
         if kind == "poly":
             for ring in _rings(data[0]):
-                pts = [tuple(p) for p in np.asarray(ring.coords)]
-                out.append((pts[0], [(None, None, p) for p in pts[1:]], True))
+                yield np.asarray(ring.coords)[:, :2], True
         elif kind == "lines":
             for ls in _lines(data[0]):
-                pts = [tuple(p) for p in np.asarray(ls.coords)]
-                if len(pts) > 1:
-                    out.append((pts[0], [(None, None, p) for p in pts[1:]], False))
+                if len(ls.coords) > 1:
+                    yield np.asarray(ls.coords)[:, :2], False
         elif kind == "circle":
-            ring = Point(data[0]).buffer(data[1], quad_segs=CIRCLE_SEGS).exterior
-            pts = [tuple(p) for p in np.asarray(ring.coords)]
-            out.append((pts[0], [(None, None, p) for p in pts[1:]], True))
+            yield np.asarray(Point(data[0]).buffer(data[1], quad_segs=CIRCLE_SEGS).exterior.coords), True
+
+
+def _subpaths(items):
+    """[(start, [(None, None, end)], closed)] per item, in the evlaser 'bez' format."""
+    return [(tuple(a[0]), [(None, None, tuple(p)) for p in a[1:]], closed) for a, closed in _polylines(items)]
+
+
+def _paths_json(items):
+    """The items as the sheet view's and the 3D's paths, [{"start", "segs", "closed"}]: straight from the point
+    arrays, rounded once (going through _subpaths and capture._sub_json was a quarter of a 16-stamp build)."""
+    out = []
+    for a, closed in _polylines(items):
+        v = np.round(a, 3).tolist()
+        out.append({"start": v[0], "segs": v[1:], "closed": closed})
     return out
 
 
@@ -74,10 +83,16 @@ class BoardPart:
         self.outline = outline                                # as designed; check_layout grows it by comp
         self.shape = outline.difference(unary_union(holes)) if holes else outline
         self.comp = (C.BURN_X, C.BURN_Y)
-        cut = [it for it in self.items if it[1] == M.CUT]
-        line = [it for it in self.items if it[1] == M.LINE]
-        self.subpaths = {M.CUT: _subpaths(cut), M.LINE: _subpaths(line), M.REF: []}
         self.labels, self.walls, self.children = [], [], []
+
+    def _by_layer(self):
+        return {M.CUT: [it for it in self.items if it[1] == M.CUT], M.LINE: [it for it in self.items if it[1] == M.LINE]}
+
+    @property
+    def subpaths(self):
+        """Like capture.Part's, for anything duck-typed that asks: the boards themselves don't need them (their
+        export is placed_ev, their JSON _paths_json)."""
+        return {**{k: _subpaths(v) for k, v in self._by_layer().items()}, M.REF: []}
 
     def _local(self, kind, data):
         if kind == "circle":
@@ -88,7 +103,7 @@ class BoardPart:
     def to_json(self):
         return {
             "index": self.index, "name": self.name, "w": _r(self.w), "h": _r(self.h), "key": self.key,
-            "paths": {str(k): [_sub_json(s) for s in v] for k, v in self.subpaths.items() if v},
+            "paths": {str(k): _paths_json(v) for k, v in self._by_layer().items() if v},
             "labels": [], "shape": _poly_json(self.shape), "area": round(self.shape.area, 2), "children": [],
             "walls": [], "origin": [_r(self.ox), _r(self.oy)],
         }
