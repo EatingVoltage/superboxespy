@@ -1,4 +1,4 @@
-"""Placed parts -> LightBurn .lbrn2 (through the evlaser writer) and SVG, one file per sheet.
+"""Placed parts -> one LightBurn .lbrn2 project (through the evlaser writer, one page per sheet) and one SVG per sheet.
 
 Every sheet follows the eVlaser rules: the user's layers and values, CUT last, holes before outlines, T1 shows the
 sheet and the 390 mm reach line, a Notes popup with the instructions, origin = sheet lower-left, Absolute Coords.
@@ -225,37 +225,71 @@ def lbrn_saved(xml):
     return "AskForSendName" in xml[:600]
 
 
-def sheet_files(name, title, parts, placements, deco, material, sheet, notes_extra="", previous=None, comp=None):
-    """[(filename, lbrn2 text, svg text, minutes per layer, offcut mm)] - one per sheet.
-    previous: {sheet index: text of that sheet's existing .lbrn2} - LightBurn-saved layers are carried over."""
-    previous = previous or {}
+def _time_txt(minutes):
+    return ", ".join("%s %.1f min" % (k.split(" - ")[0], v) for k, v in minutes.items()) or "-"
+
+
+def project_files(name, title, parts, placements, deco, material, sheet, notes_extra="", previous=None, comp=None):
+    """The whole job as ONE LightBurn project, one page per sheet (LightBurn 2.2 pages), plus one SVG per sheet.
+    {"lbrn2": (filename, text), "svgs": [(filename, text)], "sheets": [{"parts", "minutes", "offcut"}], "kept": bool}.
+    previous: text of the project's existing .lbrn2 - if LightBurn saved it, its layers are carried over. Layers
+    belong to the project in LightBurn, so the carry-over covers every page."""
     key, mat, layers = material_layers(material)
     st = S.sheet_tuple(sheet)
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     sizes = [(p.w, p.h) for p in parts]
-    out = []
+    pages, svgs, info = [], [], []
     for n in range(n_sheets):
         evs = [placed_part(parts[pl["part"]], pl, deco.get(pl["part"], []), comp)
                for pl in placements if pl["sheet"] == n]
         G.check_sheet(evs, st, name="sheet %d" % (n + 1))
-        minutes = G.job_time(evs, layers)
-        off = S.offcut(placements, sizes, sheet, n)
-        fname = "%02d_%s.lbrn2" % (n + 1, slug(name))
-        time_txt = ", ".join("%s %.1f min" % (k.split(" - ")[0], v) for k, v in minutes.items())
-        notes = ("%s - sheet %d of %d.\n"
+        pages.append(("Sheet %d" % (n + 1), evs))
+        svgs.append(("%02d_%s.svg" % (n + 1, slug(name)), svg(evs, st, title)))
+        info.append({"parts": len(evs), "minutes": G.job_time(evs, layers),
+                     "offcut": S.offcut(placements, sizes, sheet, n)})
+    extra = (notes_extra + "\n") if notes_extra else ""
+    if n_sheets == 1:
+        s = info[0]
+        notes = ("%s - 1 sheet.\n"
                  "Parts: %d. Estimated time: %s (rough - LightBurn's Preview has the real number).\n"
-                 "Offcut: a clean strip %g x %.0f mm across the top.\n%s"
-                 "After regenerating, reopen this file in LightBurn, or you'll cut the old geometry.\n"
-                 % (title, n + 1, n_sheets, len(evs), time_txt or "-", st[0], off,
-                    (notes_extra + "\n") if notes_extra else ""))
-        keep = kept_layers(previous.get(n) or previous.get(str(n)))
-        if keep:
-            notes += "Layer settings carried over from your LightBurn-saved version of this sheet.\n"
-        notes += lbrn.common_notes(mat["label"], st)
-        lb = lbrn.render(evs, layers, notes, st, material_height=material.get("thickness", mat["thickness"]),
-                         keep=keep)
-        out.append((fname, lb, svg(evs, st, title), minutes, off))
+                 "Offcut: a clean strip %g x %.0f mm across the top.\n"
+                 % (title, s["parts"], _time_txt(s["minutes"]), st[0], s["offcut"]))
+    else:
+        notes = ("%s - %d sheets, one page each (LightBurn 2.2 or newer). Each page is one sheet: open it with the "
+                 "tabs over the workspace or in the Pages panel, check LightBurn's Preview, then Start.\n"
+                 % (title, n_sheets))
+        notes += "".join("Sheet %d: %d part%s, %s, offcut %g x %.0f mm across the top.\n"
+                         % (n + 1, s["parts"], "" if s["parts"] == 1 else "s", _time_txt(s["minutes"]), st[0],
+                            s["offcut"])
+                         for n, s in enumerate(info))
+        notes += "Times are rough - LightBurn's Preview has the real number.\n"
+    notes += extra + "After regenerating, reopen this file in LightBurn, or you'll cut the old geometry.\n"
+    keep = kept_layers(previous)
+    if keep:
+        notes += "Layer settings carried over from your LightBurn-saved version of this project.\n"
+    notes += lbrn.common_notes(mat["label"], st)
+    lb = lbrn.render_pages(pages, layers, notes, st, material_height=material.get("thickness", mat["thickness"]),
+                           keep=keep)
+    return {"lbrn2": ("%s.lbrn2" % slug(name), lb), "svgs": svgs, "sheets": info, "kept": bool(keep)}
+
+
+def total_minutes(sheets):
+    """Minutes per layer summed over all sheets."""
+    out = {}
+    for s in sheets:
+        for k, v in s["minutes"].items():
+            out[k] = out.get(k, 0.0) + v
     return out
+
+
+def files_result(proj):
+    """export()/calibration_export() result: the one .lbrn2 project, the SVG sheets and the per-sheet numbers."""
+    fname, lb = proj["lbrn2"]
+    out = [{"name": fname, "kind": "lbrn2", "content": lb, "minutes": total_minutes(proj["sheets"])}]
+    for (sname, svg), s in zip(proj["svgs"], proj["sheets"]):
+        out.append({"name": sname, "kind": "svg", "content": svg, "minutes": s["minutes"], "offcut": s["offcut"]})
+    return {"ok": True, "files": out, "kept": proj["kept"],
+            "sheets": [{"minutes": s["minutes"], "offcut": round(s["offcut"], 1)} for s in proj["sheets"]]}
 
 
 SVG_COLOURS = {M.CUT: "#ff0000", M.LINE: "#0000ff", M.FILL: "#000000"}

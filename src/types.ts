@@ -93,3 +93,11 @@ export interface BoxConfig {
 }
 
 export interface OutFile { name: string; kind: "lbrn2" | "svg"; content: string; minutes?: Record<string, number>; offcut?: number }
+/** export / calibration_export: ONE .lbrn2 project (a page per sheet), one .svg per sheet, the numbers per sheet. */
+export interface ExportResult {
+  ok: boolean;
+  error?: string;
+  files: OutFile[];
+  sheets: { minutes: Record<string, number>; offcut: number }[];
+  kept: boolean;               // layer settings carried over from a LightBurn-saved version of the project
+}

@@ -1,6 +1,7 @@
 // Files on disk. With a folder picked (File System Access API: Chrome, Edge, or Brave with
 // brave://flags/#file-system-access-api on) everything is written straight into it:
-//   <folder>/<box name>/NN_name.lbrn2 (+ .svg)     the sheets
+//   <folder>/<box name>/<box name>.lbrn2           the LightBurn project, one page per sheet
+//   <folder>/<box name>/NN_<box name>.svg          the sheets as SVG
 //   <folder>/<box name>/<box name>.box.json         the box
 //   <folder>/materials.json                         thickness, kerf and fits per material
 // Without one, files are downloaded (several at once as a zip).
@@ -107,6 +108,80 @@ export async function lightburnSaved(sub: string, names: string[]): Promise<stri
     }
   }
   return best?.text ?? null;
+}
+
+/** Names of the files in <folder>/<sub>/ ([] when there's no folder or no such subfolder). */
+export async function listFolder(sub: string): Promise<string[]> {
+  const root = await writable();
+  if (!root) return [];
+  try {
+    const dir = await root.getDirectoryHandle(safeName(sub));
+    const names: string[] = [];
+    for await (const [n, h] of dir.entries()) if (h.kind === "file") names.push(n);
+    return names;
+  } catch {
+    return [];
+  }
+}
+
+// ------------------------------------------------------------------ Open in LightBurn
+// The browser can't start programs, and it never learns the picked folder's full path, only its name. serve.py
+// finds the folder by that name (checking the file there by its SHA-256, so it's the one just written) and starts
+// LightBurn on it. The full path it found is remembered per folder name; if it can't find the folder, the user is
+// asked for the path once.
+const ROOT_KEY = "superboxes.folderPath.";
+
+function remembered(name: string): string | null {
+  try {
+    return localStorage.getItem(ROOT_KEY + name);
+  } catch {
+    return null;
+  }
+}
+
+function remember(name: string, path: string) {
+  try {
+    localStorage.setItem(ROOT_KEY + name, path);
+  } catch {
+    /* private window: ask again next time */
+  }
+}
+
+async function sha256(text: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export type OpenResult = { ok: true; path: string } | { ok: false; error: string; cancelled?: boolean };
+
+/** Open <folder>/<sub>/<file> (written a moment ago with `content`) in LightBurn. */
+export async function openInLightBurn(sub: string, file: string, content: string): Promise<OpenResult> {
+  const name = folder?.name;
+  if (!name) return { ok: false, error: "No folder picked." };
+  const req = { folder: name, path: [safeName(sub), file], sha256: await sha256(content) };
+  const ask = async (root: string | null) => {
+    try {
+      const r = await fetch("/api/open-lightburn", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...req, root }),
+      });
+      if (!r.ok) throw new Error(String(r.status));
+      return (await r.json()) as { ok: boolean; path?: string; root?: string; error?: string; need_root?: boolean };
+    } catch {
+      return { ok: false, error: "Open in LightBurn needs the app started with start.bat or the Start menu entry (serve.py)." };
+    }
+  };
+  let r = await ask(remembered(name));
+  if (!r.ok && r.need_root) {
+    const typed = prompt(`Where is the folder "${name}" on this computer? Paste its full path ` +
+      `(in Explorer: click the address bar and copy).`, remembered(name) ?? "");
+    if (!typed?.trim()) return { ok: false, error: "Not opened.", cancelled: true };
+    r = await ask(typed.trim().replace(/^"(.*)"$/, "$1"));
+  }
+  if (!r.ok) return { ok: false, error: r.error ?? "LightBurn didn't start." };
+  if (r.root) remember(name, r.root);
+  return { ok: true, path: r.path ?? file };
 }
 
 export async function readFromFolder(name: string): Promise<string | null> {

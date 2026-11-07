@@ -132,15 +132,39 @@ class Export(unittest.TestCase):
     def test_lightburn_saved_layers_survive_a_rebuild(self):
         first = [f for f in api.export(self.req)["files"] if f["kind"] == "lbrn2"][0]["content"]
         # what LightBurn does when the user saves: header gains AskForSendName, CUT speed changed by hand
-        saved = first.replace('MirrorY="False">', 'MirrorY="False" AskForSendName="True">', 1)
+        saved = first.replace('<LightBurnProject ', '<LightBurnProject AskForSendName="True" ', 1)
         saved = saved.replace('<speed Value="12.5"/>', '<speed Value="11"/>')
-        res = api.export({**self.req, "previous": {"0": saved}})
+        res = api.export({**self.req, "previous": saved})
         lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
         self.assertIn('<speed Value="11"/>', lb)
         self.assertIn("carried over", lb)
-        res2 = api.export({**self.req, "previous": {"0": first}})   # our own file: nothing to keep
+        res2 = api.export({**self.req, "previous": first})   # our own file: nothing to keep
         lb2 = [f for f in res2["files"] if f["kind"] == "lbrn2"][0]["content"]
         self.assertIn('<speed Value="12.5"/>', lb2)
+
+    def test_one_project_with_a_page_per_sheet(self):
+        req = {"generator": "ABox", "params": ui_params("ABox", x=250, y=250, h=250), "material": MAT,
+               "options": {}}
+        b = api.build(req)
+        n = len(b["sheets"])
+        self.assertGreater(n, 1)
+        req["layout"] = b["placements"]
+        res = api.export(req)
+        self.assertTrue(res["ok"], res.get("error"))
+        lbs = [f for f in res["files"] if f["kind"] == "lbrn2"]
+        self.assertEqual(len(lbs), 1)
+        self.assertEqual(lbs[0]["name"], "abox.lbrn2")
+        lb = lbs[0]["content"]
+        self.assertIn('AppVersion="2.2.00"', lb)
+        self.assertIn('CurrentPage="0" Page0Name="Sheet 1"', lb)
+        self.assertEqual(re.findall(r'SubType="Page" Name="([^"]+)"', lb), ["Sheet %d" % k for k in range(2, n + 1)])
+        self.assertEqual(lb.count("<CutSetting "), len(set(re.findall(r'CutIndex="(\d+)"', lb))))   # layers once
+        self.assertEqual(lb.count("<Notes "), 1)
+        self.assertIn("%d sheets, one page each" % n, lb)
+        self.assertEqual(len([f for f in res["files"] if f["kind"] == "svg"]), n)
+        self.assertEqual(len(res["sheets"]), n)
+        # every part sits on its page once: one group per part plus the T1 sheet per page
+        self.assertEqual(len(re.findall(r'<Shape Type="Group">', lb)), len(b["parts"]) + n)
 
     def test_svg_has_no_tool_layer(self):
         res = api.export(self.req)

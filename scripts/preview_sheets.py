@@ -2,7 +2,8 @@
 
     .venv/Scripts/python scripts/preview_sheets.py OUT_DIR [ABox '{"x":50,"y":50,"h":50}']
 
-Writes NN_*.lbrn2/.svg/.png for the box plus the 00a/00b calibration sheets. Look at every PNG.
+Writes the box's .lbrn2 project (a page per sheet), NN_*.svg and .png per sheet, plus the 00a/00b calibration sheets.
+Look at every PNG.
 """
 import json
 import os

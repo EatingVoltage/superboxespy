@@ -254,11 +254,9 @@ def calibration_export(req):
             notes = COMB_NOTES
         name = "fit-comb"
     placements, too_big = _layout(parts, sheet, which != "kerf")
-    files = X.sheet_files(name, title, parts, placements, deco, mat, sheet, notes_extra=notes)
-    out = []
+    proj = X.project_files(name, title, parts, placements, deco, mat, sheet, notes_extra=notes)
     prefix = "00a" if which == "kerf" else "00b"
-    for fname, lb, svg, minutes, off in files:
-        base = "%s_%s" % (prefix, name) + ("" if len(files) == 1 else "_" + fname[:2])
-        out.append({"name": base + ".lbrn2", "kind": "lbrn2", "content": lb, "minutes": minutes})
-        out.append({"name": base + ".svg", "kind": "svg", "content": svg})
-    return {"ok": True, "files": out}
+    proj["lbrn2"] = ("%s_%s.lbrn2" % (prefix, name), proj["lbrn2"][1])
+    one = len(proj["svgs"]) == 1
+    proj["svgs"] = [("%s_%s%s.svg" % (prefix, name, "" if one else "_" + f[:2]), svg) for f, svg in proj["svgs"]]
+    return X.files_result(proj)

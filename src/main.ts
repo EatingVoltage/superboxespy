@@ -7,7 +7,7 @@ import { SheetView, problems } from "./sheetview";
 import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import { A3 } from "./types";
-import type { BoxConfig, Build, Fit, Group, Options, OutFile, Placement, Sheet } from "./types";
+import type { BoxConfig, Build, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -418,44 +418,80 @@ async function share() {
 }
 
 // ------------------------------------------------------------------ export
-async function exportFiles(kind: "lbrn2" | "svg") {
+/** Export: one .lbrn2 project with a page per sheet ("lbrn2") or one .svg per sheet. open: write the project into
+ *  the folder (picking one first if needed) and open it in LightBurn. */
+async function exportFiles(kind: "lbrn2" | "svg", open = false) {
   if (!S.build) return;
   const bad = problems(S.build.parts, S.placements, S.sheet);
   if (bad.size) {
     toast("Some parts break the sheet rules (shown red). Move them or Re-pack first.", true);
     return;
   }
+  if (open && !files.folderName()) {
+    if (!files.canPickFolder()) {
+      toast("Open in LightBurn writes the project into a folder, and this browser can't write into folders.\n" +
+        "Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api), or Export as LightBurn.", true, 9000);
+      return;
+    }
+    toast("Pick the folder the LightBurn files go to (e.g. C:\\Projects\\Laser lightburn).");
+    if (!(await pickFolder())) return;
+  }
   S.busy++;
   setStatus("Writing files…");
   const name = files.safeName(S.name);
   // carry over layer settings the user changed in LightBurn (eVlaser rule: a rebuild never wipes them)
-  const previous: Record<number, string> = {};
+  let previous: string | null = null;
+  let stale: string[] = [];
   if (kind === "lbrn2" && files.folderName()) {
-    const n = Math.max(0, ...S.placements.map((q) => q.sheet + 1));
-    for (let k = 0; k < n; k++) {
-      const nn = String(k + 1).padStart(2, "0");
-      const text = await files.lightburnSaved(name, [`${nn}_${name}.lbrn2`, `${nn}_${name}_backup.lbrn2`]);
-      if (text) previous[k] = text;
-    }
+    const here = await files.listFolder(name);
+    previous = await files.lightburnSaved(name, [`${name}.lbrn2`, `${name}_backup.lbrn2`]);
+    // before pages there was one NN_<name>.lbrn2 per sheet: their saved layers count until the project exists
+    const literal = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`^\\d\\d_${literal}(_backup)?\\.lbrn2$`);
+    const old = here.filter((n) => re.test(n));
+    if (!previous && !here.includes(`${name}.lbrn2`)) previous = await files.lightburnSaved(name, old);
+    stale = old.filter((n) => !n.includes("_backup."));
   }
-  const r = await py.call<{ ok: boolean; error?: string; files: OutFile[] }>("export", { ...request(S.placements), previous });
+  const r = await py.call<ExportResult>("export", { ...request(S.placements), previous });
   S.busy--;
   setStatus("Ready");
   if (!r.ok) {
     toast(r.error ?? "Export failed", true, 8000);
     return;
   }
-  const out = r.files.filter((f) => f.kind === kind).map((f) => ({ ...f, name: f.name.replace(/^(\d\d)_[^.]*/, `$1_${name}`) }));
+  const out = r.files.filter((f) => f.kind === kind)
+    .map((f) => ({ ...f, name: f.kind === "lbrn2" ? `${name}.lbrn2` : f.name.replace(/^(\d\d)_[^.]*/, `$1_${name}`) }));
   const withBox = files.folderName() ? [...out, { name: `${name}.box.json`, content: cfg.toJSON(config()) }] : out;
-  const where = await files.save(name, `${name}_${kind}.zip`, withBox);
+  let where: string;
+  if (open) {
+    const dir = await files.writeToFolder(name, withBox);
+    if (!dir) {
+      toast("Couldn't write into the folder: the browser has no permission. Click the folder button and pick it again.", true, 9000);
+      return;
+    }
+    where = `Saved ${withBox.map((f) => f.name).join(", ")} to ${dir}`;
+  } else {
+    where = await files.save(name, `${name}_${kind}.zip`, withBox);
+  }
   if (withBox.length > out.length) cfg.remember(config());
-  const times = out.filter((f) => f.minutes).map((f, i) =>
-    `sheet ${i + 1}: ~${Object.values(f.minutes!).reduce((a, b) => a + b, 0).toFixed(1)} min`).join(", ");
-  toast(`${where}.` +
+  let opened = "";
+  let failed = false;
+  if (open) {
+    setStatus("Opening LightBurn…");
+    const o = await files.openInLightBurn(name, out[0].name, out[0].content);
+    setStatus("Ready");
+    opened = o.ok ? `\nOpened ${o.path} in LightBurn.` : o.cancelled ? "\nNot opened in LightBurn." : `\nNot opened: ${o.error}`;
+    failed = !o.ok && !o.cancelled;
+  }
+  const n = r.sheets.length;
+  const times = r.sheets.map((s, i) =>
+    `${n > 1 ? `sheet ${i + 1}` : "the sheet"}: ~${Object.values(s.minutes).reduce((a, b) => a + b, 0).toFixed(1)} min`).join(", ");
+  toast(`${where}.` + opened +
+    (kind === "lbrn2" && n > 1 ? `\n${n} sheets, one page each in LightBurn.` : "") +
     (times ? `\nEstimated ${times}.` : "") +
-    (Object.keys(previous).length
-      ? `\nKept your LightBurn layer settings on sheet ${Object.keys(previous).map((k) => Number(k) + 1).join(", ")}.` : "") +
-    (kind === "lbrn2" ? "\nIf LightBurn has them open: reopen, or you'll cut the old geometry." : ""), false, 9000);
+    (r.kept && kind === "lbrn2" ? "\nKept your LightBurn layer settings." : "") +
+    (stale.length ? `\nThe old per-sheet files ${stale.join(", ")} are still in the folder: delete them so they don't get cut.` : "") +
+    (kind === "lbrn2" ? "\nIf LightBurn already had it open: reopen it, or you'll cut the old geometry." : ""), failed, 10000);
 }
 
 // ------------------------------------------------------------------ tabs, sheets | 3D split
@@ -605,6 +641,17 @@ async function setFolderButton() {
       : "This browser can't write to a folder: files are downloaded. In Brave, enable brave://flags/#file-system-access-api";
 }
 
+/** Let the user pick the output folder; loads its materials.json. False when cancelled. */
+async function pickFolder(): Promise<boolean> {
+  const ok = !!(await files.pickFolder());
+  if (ok) {
+    await loadMaterialsFromFolder();
+    renderMaterial();
+  }
+  setFolderButton();
+  return ok;
+}
+
 async function loadMaterialsFromFolder() {
   const text = await files.readFromFolder("materials.json");
   if (!text) return;
@@ -651,13 +698,9 @@ function wire() {
       toast("This browser can't write into a folder, so files are downloaded.\nIn Brave: enable brave://flags/#file-system-access-api (or use Chrome/Edge).", false, 9000);
       return;
     }
-    if (await files.pickFolder()) {
-      await loadMaterialsFromFolder();
-      renderMaterial();
-      toast(`Files now go to ${files.folderName()}/<box name>/`);
-    }
-    setFolderButton();
+    if (await pickFolder()) toast(`Files now go to ${files.folderName()}/<box name>/`);
   };
+  $("btn-open-lbrn").onclick = () => exportFiles("lbrn2", true);
   $("btn-lbrn").onclick = () => exportFiles("lbrn2");
   $("btn-svg").onclick = () => exportFiles("svg");
   $("btn-repack").onclick = () => {

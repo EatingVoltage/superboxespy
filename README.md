@@ -15,7 +15,7 @@ Double-click **`start.bat`**. It serves the app on `http://localhost:5198` and o
 (Edge if there's no Chrome). The first start builds the app, which needs Node.js and Python.
 
 **Pick folder** (top right) once, e.g. `C:\Projects\Laser lightburn`. From then on every export goes to
-`<folder>/<box name>/`: the `.lbrn2` sheets, the `.svg` sheets and the box's `.box.json`. The measured material
+`<folder>/<box name>/`: the LightBurn project (one page per sheet), the `.svg` sheets and the box's `.box.json`. The measured material
 values go to `<folder>/materials.json`.
 Chrome and Edge can do this out of the box. **Brave can't until you enable `brave://flags/#file-system-access-api`.**
 Without a folder, files are downloaded instead (several as a zip).
@@ -92,8 +92,19 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
 
 ## What LightBurn gets
 
-One `.lbrn2` per sheet: `01_<name>.lbrn2`, `02_…`. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
+**One LightBurn project per box, `<name>.lbrn2`, with one page per A3 sheet** ("Sheet 1", "Sheet 2", …: the tabs over
+the workspace or the Pages panel). Pages need **LightBurn 2.2** or newer; older versions show every sheet's parts on
+top of each other. Open a page, check it in LightBurn's Preview, then Start. Layers and the Notes belong to the
+project, so they're the same on every page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
 `00_calibration/`.
+
+- **Export as LightBurn** writes the project (with a folder: into `<folder>/<box name>/`, plus the `.box.json`).
+- **Open in LightBurn** does the same, then opens the project in LightBurn. It needs a picked folder (it asks for
+  one if there isn't one yet) and the app started from `start.bat` or the Start menu entry, because `serve.py` starts
+  LightBurn: a browser can't. The browser also never learns the folder's full path, only its name, so `serve.py`
+  looks for a folder by that name in your home folder and near the top of each fixed drive (e.g.
+  `C:\Projects\Laser lightburn`). It opens the file only if it's byte for byte the one just written. If it can't
+  find the folder, the app asks for its path once and remembers it.
 
 | Colour | Layer | Mode | poplar 3.6 values | Used for |
 |---|---|---|---|---|
@@ -102,15 +113,16 @@ One `.lbrn2` per sheet: `01_<name>.lbrn2`, `02_…`. Calibration sheets are `00a
 | T1 | tool | never output | | sheet outline, 390 mm reach line, part labels |
 
 Values come from the eVlaser toolchain (`python/evlaser/machine.py`). Holes are cut before outlines
-(Inner-to-Outer), the origin is the sheet's lower-left corner, **Start From: Absolute Coords**. Each file opens
-with a Notes popup giving the box, the sheet, the estimated time, the offcut size, the fit and where the mark is.
+(Inner-to-Outer), the origin is the sheet's lower-left corner, **Start From: Absolute Coords**. The project opens
+with a Notes popup giving the box, each sheet's parts, estimated time and offcut size, the fit and where the mark is.
 
-**Your LightBurn changes survive a re-export.** If LightBurn saved a sheet (`01_x.lbrn2`, or its `_backup`), the
-next export into the folder keeps that sheet's layer settings and only replaces the geometry. **Reopen the files in
-LightBurn after exporting, or you'll cut the old geometry.**
+**Your LightBurn changes survive a re-export.** If LightBurn saved the project (`x.lbrn2`, or its `_backup`), the
+next export into the folder keeps its layer settings and only replaces the geometry. Boxes exported before pages
+have one `01_x.lbrn2` per sheet: their saved layers carry over to the first project, and the export reminds you to
+delete the old files. **Reopen the project in LightBurn after exporting, or you'll cut the old geometry.**
 
-The SVG has red cut lines and blue engrave lines on a 297 × 420 mm page, Y flipped so it matches LightBurn. T1 is
-left out, because other programs would cut it.
+The SVG export stays one file per sheet (`01_<name>.svg`, `02_…`): red cut lines and blue engrave lines on a
+297 × 420 mm page, Y flipped so it matches LightBurn. T1 is left out, because other programs would cut it.
 
 ## Status and what's next
 

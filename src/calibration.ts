@@ -9,7 +9,7 @@ import * as py from "./py";
 import * as mats from "./materials";
 import { h } from "./params";
 import { SheetView } from "./sheetview";
-import type { Build, MaterialProfile, OutFile, Sheet } from "./types";
+import type { Build, ExportResult, MaterialProfile, Sheet } from "./types";
 
 export interface CalibCtx {
   material(): MaterialProfile;
@@ -211,7 +211,7 @@ async function preview(el: HTMLElement, ctx: CalibCtx, req: object) {
 }
 
 async function exportSheet(ctx: CalibCtx, which: "kerf" | "comb", req: object) {
-  const r = await py.call<{ ok: boolean; error?: string; files: OutFile[] }>("calibration_export", { ...req, which, sheet: ctx.sheet() });
+  const r = await py.call<ExportResult>("calibration_export", { ...req, which, sheet: ctx.sheet() });
   if (!r.ok) {
     ctx.toast(r.error ?? "export failed", true);
     return;

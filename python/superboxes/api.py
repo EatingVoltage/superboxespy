@@ -141,14 +141,10 @@ def export(req):
             mark.get("text") or X.mark_text(), parts[mi].name)
     else:
         mark_note = "No maker's mark."
-    files = X.sheet_files(name, _title(req), parts, layout, deco, mat, sheet,
-                          notes_extra="Fit: %s. %s" % (fit, mark_note), previous=req.get("previous"),
-                          comp=info["comp"])
-    out = []
-    for fname, lb, svg, minutes, off in files:
-        out.append({"name": fname, "kind": "lbrn2", "content": lb, "minutes": minutes, "offcut": off})
-        out.append({"name": fname.replace(".lbrn2", ".svg"), "kind": "svg", "content": svg})
-    return {"ok": True, "files": out}
+    proj = X.project_files(name, _title(req), parts, layout, deco, mat, sheet,
+                           notes_extra="Fit: %s. %s" % (fit, mark_note), previous=req.get("previous"),
+                           comp=info["comp"])
+    return X.files_result(proj)
 
 
 def clash(req):

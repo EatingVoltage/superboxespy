@@ -1,4 +1,5 @@
-"""Writes LightBurn .lbrn2 project files (LightBurn 2.x XML, the way LightBurn 2.1.04 saves its own).
+"""Writes LightBurn .lbrn2 project files (LightBurn 2.x XML, the way LightBurn 2.1.04 saves its own; several sheets
+as pages of one project the way LightBurn 2.2 does).
 
 Items come from geom.Part: (layer, 'poly'|'lines'|'circle'|'bez', ...). Lines are cleaned before writing:
 LightBurn flags zero-length and duplicate segments ("duplicates" warning), so every polyline is exploded onto a
@@ -13,6 +14,8 @@ from shapely.geometry import GeometryCollection, LineString, MultiLineString, Mu
 from shapely.ops import linemerge
 
 GRID = 1000  # snap grid for de-duplication: 0.001 mm
+LIGHTBURN = "2.1.04"       # AppVersion of a plain one-sheet file
+PAGES_VERSION = "2.2.00"   # pages arrived in LightBurn 2.2
 
 
 def _f(v):
@@ -206,7 +209,7 @@ def _cut_setting(index, name, priority, s):
 
 
 HEADER = '''<?xml version="1.0" encoding="UTF-8"?>
-<LightBurnProject AppVersion="2.1.04" DeviceName="" FormatVersion="1" MaterialHeight="%s" MirrorX="False" MirrorY="False">
+<LightBurnProject AppVersion="%s" DeviceName="" FormatVersion="1" MaterialHeight="%s" MirrorX="False" MirrorY="False"%s>
     <VariableText>
         <Start Value="0"/>
         <End Value="999"/>
@@ -233,6 +236,42 @@ HEADER = '''<?xml version="1.0" encoding="UTF-8"?>
 '''
 
 
+def _layers_xml(parts, layers, keep, ref_layer):
+    used = {it[0] for p in parts for it in p.items}
+    body = []
+    prio = 0
+    for index, name, settings in layers:
+        if index in used:
+            if index in keep:
+                body.append(re.sub(r'(<priority Value=")\d+', r"\g<1>%d" % prio, keep[index], count=1))
+            else:
+                body.append(_cut_setting(index, name, prio, settings))
+            prio += 1
+    body.append('    <CutSetting type="Tool">\n        <index Value="%d"/>\n        <name Value="T1"/>\n'
+                '        <priority Value="%d"/>\n    </CutSetting>\n' % (ref_layer, prio))
+    return "".join(body)
+
+
+def _group_xml(items, indent, attrs=""):
+    return ('%s<Shape Type="Group"%s>\n%s    <XForm>1 0 0 1 0 0</XForm>\n%s    <Children>\n%s%s    </Children>\n'
+            '%s</Shape>\n') % (indent, attrs, indent, indent, "".join(items), indent, indent)
+
+
+def _sheet_xml(parts, sheet, ref_layer, indent):
+    """The T1 reference (sheet outline, reach limit line) and one group per part."""
+    sw, sh, usable = sheet
+    ref = [(ref_layer, "poly", box(0, 0, sw, sh))]
+    if usable < sh:
+        ref.append((ref_layer, "lines", LineString([(0, usable), (sw, usable)])))
+    inner = indent + " " * 8
+    return "".join(_group_xml([_item_xml(it, inner) for it in items], indent)
+                   for items in [ref] + [p.items for p in parts])
+
+
+def _notes_xml(notes):
+    return '    <Notes ShowOnLoad="1" Notes=%s/>\n' % quoteattr(notes).replace("\n", "&#10;")
+
+
 def write(path, parts, layers, notes, sheet, material_height=3.6, keep=None, ref_layer=30):
     """Write one sheet to `path`; see render()."""
     with open(path, "w", encoding="utf-8", newline="\n") as f:
@@ -244,35 +283,27 @@ def render(parts, layers, notes, sheet, material_height=3.6, keep=None, ref_laye
     items are written. keep: {index: CutSetting XML} from saved_layers() - those layers are written exactly as the
     user saved them in LightBurn (only the run order is renewed), so a rebuild never wipes their machine-side changes.
     sheet = (w, h, usable h): drawn on the never-output T1 layer, with the reach limit line when usable < h."""
-    sw, sh, usable = sheet
-    keep = keep or {}
-    used = sorted({it[0] for p in parts for it in p.items})
-    body = [HEADER % _f(material_height)]
-    prio = 0
-    for index, name, settings in layers:
-        if index in used:
-            if index in keep:
-                body.append(re.sub(r'(<priority Value=")\d+', r"\g<1>%d" % prio, keep[index], count=1))
-            else:
-                body.append(_cut_setting(index, name, prio, settings))
-            prio += 1
-    body.append('    <CutSetting type="Tool">\n        <index Value="%d"/>\n        <name Value="T1"/>\n'
-                '        <priority Value="%d"/>\n    </CutSetting>\n' % (ref_layer, prio))
-    ref = [(ref_layer, "poly", box(0, 0, sw, sh))]
-    if usable < sh:
-        ref.append((ref_layer, "lines", LineString([(0, usable), (sw, usable)])))
-    body.append('    <Shape Type="Group">\n        <XForm>1 0 0 1 0 0</XForm>\n        <Children>\n')
-    for it in ref:
-        body.append(_item_xml(it, " " * 12))
-    body.append('        </Children>\n    </Shape>\n')
-    for p in parts:
-        body.append('    <Shape Type="Group">\n        <XForm>1 0 0 1 0 0</XForm>\n        <Children>\n')
-        for it in p.items:
-            body.append(_item_xml(it, " " * 12))
-        body.append('        </Children>\n    </Shape>\n')
-    body.append('    <Notes ShowOnLoad="1" Notes=%s/>\n' % quoteattr(notes).replace("\n", "&#10;"))
-    body.append('</LightBurnProject>\n')
-    return "".join(body)
+    return "".join([HEADER % (LIGHTBURN, _f(material_height), ""), _layers_xml(parts, layers, keep or {}, ref_layer),
+                    _sheet_xml(parts, sheet, ref_layer, "    "), _notes_xml(notes), "</LightBurnProject>\n"])
+
+
+def render_pages(pages, layers, notes, sheet, material_height=3.6, keep=None, ref_layer=30):
+    """Several sheets as one LightBurn 2.2 project, one page each (the Pages panel), as .lbrn2 text. pages = [(name,
+    parts)], every page at its own sheet position (pages share coordinates). Layers and Notes are the project's,
+    shared by all pages; layers, keep and sheet as in render().
+    The format is LightBurn 2.2.00's loader (eVlaser skill, confirmed 2026-10-25 with a 2-page project and
+    LightBurn's own autosave of it): the first page's shapes sit at the top level and its name in the header
+    (Page0Name); every further page is a group with SubType="Page" and a Name, its shapes in Children. Versions
+    before 2.2 read the pages as plain groups, all on top of each other."""
+    (first_name, first), rest = pages[0], pages[1:]
+    head = ' CurrentPage="0" Page0Name=%s' % quoteattr(first_name)
+    allparts = [p for _, parts in pages for p in parts]
+    body = [HEADER % (PAGES_VERSION, _f(material_height), head), _layers_xml(allparts, layers, keep or {}, ref_layer),
+            _sheet_xml(first, sheet, ref_layer, "    ")]
+    for name, parts in rest:
+        body.append(_group_xml([_sheet_xml(parts, sheet, ref_layer, " " * 12)], "    ",
+                               ' SubType="Page" Name=%s' % quoteattr(name)))
+    return "".join(body + [_notes_xml(notes), "</LightBurnProject>\n"])
 
 
 # ------------------------------------------------------------ files the user saved in LightBurn
