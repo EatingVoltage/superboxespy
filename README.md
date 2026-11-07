@@ -14,6 +14,10 @@ boxes.py itself runs unchanged inside the browser (Pyodide, Python 3.14), pinned
 Double-click **`start.bat`**. It serves the app on `http://localhost:5198` and opens it in its own Chrome window
 (Edge if there's no Chrome). The first start builds the app, which needs Node.js and Python.
 
+**Start menu:** after the first build, run `powershell -ExecutionPolicy Bypass -File scripts\add-to-start-menu.ps1`
+once. The **superboxes** entry starts the app without a console window. The server keeps running in the background,
+and starting the entry again opens another window on it.
+
 **Pick folder** (top right) once, e.g. `C:\Projects\Laser lightburn`. From then on every export goes to
 `<folder>/<box name>/`: the LightBurn project (one page per sheet), the `.svg` sheets and the box's `.box.json`. The measured material
 values go to `<folder>/materials.json`.

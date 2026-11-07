@@ -17,6 +17,7 @@ import mimetypes
 import os
 import re
 import shutil
+import socket
 import string
 import subprocess
 import sys
@@ -218,15 +219,29 @@ def open_app(url, which):
     webbrowser.open(url)
 
 
+def already_running(port):
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            return True
+    except OSError:
+        return False
+
+
 def main():
+    if sys.stderr is None:   # pythonw (Start menu shortcut) has no console: logging to it would break the request
+        sys.stdout = sys.stderr = open(os.devnull, "w")
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=5198)
     ap.add_argument("--browser", default="auto", choices=["auto", "chrome", "edge", "default", "none"])
     a = ap.parse_args()
     if not os.path.isfile(os.path.join(DIST, "index.html")):
         sys.exit("No build found. Run once:  npm install  &&  npm run setup  &&  npm run build")
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), functools.partial(Handler, directory=DIST))
     url = "http://localhost:%d/" % a.port
+    if already_running(a.port):   # started before: open another window on it instead of a second server
+        print("superboxes already running at %s" % url)
+        open_app(url, a.browser)
+        return
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", a.port), functools.partial(Handler, directory=DIST))
     print("superboxes running at %s  (Ctrl+C to stop)" % url)
     threading.Timer(0.4, open_app, (url, a.browser)).start()
     try:
