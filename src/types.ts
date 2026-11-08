@@ -57,6 +57,8 @@ export interface FaceItem {
   h?: number;
   r?: number;
   part?: string;               // the library part a hole is for
+  board?: boolean;             // an edge connector's opening: at the board's height on its wall, it moves sideways only
+  lift?: number;               // its bottom from the board's top, mm (-0.5: air below)
   size: number;                // cap height, or a logo's height, mm
   bold?: boolean;
   style?: "outline" | "hatch";
@@ -75,6 +77,8 @@ export interface FaceInfo {
   free: number[][][];
   covered: number[][][];       // what other parts cover on the closed box (a lid's rim over a wall)
   fixed: number[][][];         // what else is engraved there (the maker's mark), lines
+  floor: number | null;        // a wall's: the box's inside floor, view y
+  board: number | null;        // a wall's: the board's top, view y, once its height is set
   items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][]; error?: string; hole?: boolean }[];
 }
 
@@ -167,6 +171,7 @@ export interface BoxConfig {
   layout: Placement[] | null;  // the hand-arranged layout, null = packed automatically
   options: Options;
   faces?: Record<string, FaceItem[]>;   // the face editor's items per face (top, front, ...)
+  boards?: Record<string, number>;      // per wall: the board's top above the inside floor, mm (edge connectors)
   notes: string;
   saved: string;
 }

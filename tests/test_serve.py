@@ -196,6 +196,25 @@ class HolePresets(unittest.TestCase):
         ])
         self.assertEqual(serve.part_holes(os.path.join(root, "gone")), [])
 
+    def test_side_connectors_become_wall_openings(self):
+        """A side connector's opening: its notch's width where it runs out past the body, from 0.5 below the board
+        to 0.5 above the part, ends rounded."""
+        body = {"type": "rect", "min": {"x": -4470000, "y": -2256000}, "max": {"x": 4470000, "y": 5094000}}
+        notch = {"type": "rect", "min": {"x": -5100000, "y": -2886000}, "max": {"x": 5100000, "y": 7094000}}
+        conf = lambda v: {"status": "confirmed", "value": v}
+        with tempfile.TemporaryDirectory() as root:
+            self.part(root, "usb", {"body_outline": conf(body), "height_above_pcb": conf(3260000),
+                                    "case_interface": conf({"kind": "notch", "profile": notch, "depth": None})})
+            d = os.path.join(root, "items", "part", "usb", "revisions", "0001", "revision.json")
+            with open(d, encoding="utf-8") as f:
+                rev = json.load(f)
+            rev["data"]["type"] = "connector_side"
+            with open(d, "w", encoding="utf-8") as f:
+                json.dump(rev, f)
+            got = serve.part_holes(root)
+        self.assertEqual(got, [{"code": "usb", "name": "USB", "kind": "edge", "shape": "rect", "w": 10.2,
+                                "h": 4.26, "r": 2.13, "lift": -0.5}])
+
 
 @unittest.skipUnless(os.name == "nt", "Windows only")
 class FileDialog(unittest.TestCase):

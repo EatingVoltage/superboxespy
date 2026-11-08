@@ -23,6 +23,8 @@ export interface FaceHost {
   faces(): Faces;
   commit(faces: Faces): void;
   showSheets(on: boolean): void;
+  boards(): Record<string, number>;
+  setBoard(role: string, mm: number | null): void;
 }
 
 const ORDER = ["top", "front", "back", "left", "right", "bottom"];
@@ -72,7 +74,10 @@ const linesD = (lines: number[][][], dx = 0, dy = 0) =>
   lines.map((l) => "M" + l.map(([x, y]) => `${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join("L")).join("");
 
 /** A hole preset from the parts library (serve.py /api/parts): its confirmed panel hole or window. */
-interface HolePreset { code: string; name: string; kind: "hole" | "window"; shape: "round" | "rect"; d?: number; w?: number; h?: number; r?: number }
+interface HolePreset {
+  code: string; name: string; kind: "hole" | "window" | "edge"; shape: "round" | "rect"; d?: number; w?: number; h?: number;
+  r?: number; lift?: number;
+}
 
 let presets: Promise<HolePreset[]> | null = null;
 function holePresets(): Promise<HolePreset[]> {
@@ -172,6 +177,7 @@ export class FaceEditor {
     if (f.covered.length) g.append(svg("path", { d: ringsD(f.covered), class: "face-covered", "fill-rule": "nonzero" }));
     g.append(svg("path", { d: ringsD(f.free), class: "face-free" }));
     if (f.fixed.length) g.append(svg("path", { d: linesD(f.fixed), class: "board-line face-fixed" }));
+    if (f.board != null) g.append(svg("line", { x1: 0, y1: f.board, x2: f.w, y2: f.board, class: "face-board" }));
     const items = new Map(this.items().map((i) => [i.id, i]));
     const d = this.drag;
     for (const it of f.items) {
@@ -251,7 +257,8 @@ export class FaceEditor {
     if (!d) return;
     const [x, y] = this.toFace(e);
     d.dx = x - d.x0;
-    d.dy = y - d.y0;
+    const it = this.items().find((i) => i.id === d.id);
+    d.dy = it?.board ? 0 : y - d.y0;                 // an edge connector stays at its board
     if (!d.moved && Math.hypot(d.dx, d.dy) < 0.8) return;
     d.moved = true;
     this.draw();
@@ -314,7 +321,8 @@ export class FaceEditor {
   addHole(p: Partial<HolePreset> & { shape: "round" | "rect" }) {
     const item: FaceItem = { id: newId(), kind: "hole", shape: p.shape, rot: 0, anchor: "c", dx: 0, dy: 0, size: 0,
       ...(p.shape === "rect" ? { w: p.w ?? 20, h: p.h ?? 10, r: p.r ?? 1 } : { d: p.d ?? 6 }),
-      ...(p.name ? { part: p.name } : {}) };
+      ...(p.name ? { part: p.name } : {}),
+      ...(p.kind === "edge" ? { board: true, lift: p.lift ?? -0.5 } : {}) };
     const faces = structuredClone(this.host.faces());
     faces[this.tab] = [...(faces[this.tab] ?? []), item];
     this.selected = item.id;
@@ -328,9 +336,14 @@ export class FaceEditor {
     const list: HolePreset[] = [];
     holePresets().then((ps) => {
       list.push(...ps);
-      const group = h("optgroup", { label: ps.length ? "Parts library" : "Parts library: none (start the app with serve.py)" });
-      ps.forEach((p, k) => group.append(h("option", { value: `p${k}` }, `${p.name}${p.kind === "window" ? " (window)" : ""} — ${holeSize(p)}`)));
-      sel.append(group);
+      const panel = h("optgroup", { label: ps.length ? "Parts library" : "Parts library: none (start the app with serve.py)" });
+      const edge = h("optgroup", { label: "Edge connectors, at the board" });
+      ps.forEach((p, k) => {
+        const label = `${p.name}${p.kind === "window" ? " (window)" : ""} — ${holeSize(p)}`;
+        (p.kind === "edge" ? edge : panel).append(h("option", { value: `p${k}` }, label));
+      });
+      sel.append(panel);
+      if (edge.children.length && this.info()[this.tab]?.floor != null) sel.append(edge);
     });
     sel.onchange = () => {
       const v = sel.value;
@@ -410,6 +423,15 @@ export class FaceEditor {
     };
     const kids: (Node | string)[] = [];
     if (!it) {
+      if (f.floor != null) {                          // a wall: where the board with its edge connectors sits
+        const role = this.tab;
+        const v = this.host.boards()[role];
+        const board = h("input", { type: "number", min: 0, step: 0.1, value: v ?? "", class: "num", placeholder: "—",
+          "aria-label": "The board's top above the inside floor, mm" }) as HTMLInputElement;
+        board.onchange = () => this.host.setBoard(role, board.value === "" ? null : Math.max(0, Number(board.value)));
+        kids.push(h("label", { class: "check", title: "The board's top surface above the box's inside floor (standoff " +
+          "+ board): edge connectors' openings on this wall sit there" }, "Board at", board, "mm above the floor"));
+      }
       kids.push(btn("Add text", "Text in eV Sans, engraved", () => this.add("text")),
         btn("Add logo", "An eV logo, engraved", () => this.add("logo")),
         btn("Import SVG", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +

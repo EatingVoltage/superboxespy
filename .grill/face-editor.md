@@ -36,6 +36,15 @@ kit; the process is discussed along the way, not settled up front.
   Private, never in the repo, always current. Rejected: a built-in table (it drifts), plain shapes only, and for now
   turning the library's jack / USB-C case notches into wall holes (needs the board's height in the box).
 
+- Decision (2026-11-08): edge connectors' wall openings come from the library too, placed by a **board height per
+  wall** (the board's top above the inside floor, set once per wall): every edge connector on that wall lines up with
+  the board and only moves sideways. Rejected: library sizes placed by hand, typed shapes only.
+- Decision (2026-11-08): **inside faces** as two pages with a flip (page 1 engraves the inside mirrored, the sheet
+  turned over left-right against a corner stop, page 2 engraves the outside and cuts); a registration test cut
+  first. Rejected: one side per part, later.
+- Decision (2026-11-08): the **thumb notch** first among product-box cut-outs (a half-round notch in an edge to lift
+  a lid). Rejected: a hand-hold preset alone (the rounded rectangle makes one), later.
+
 ## Progress
 - 2026-11-07, the first slice: ABox's over-the-top lid sits on the box in the 3D (lifts off, no clashes); `faces.py`
   finds the closed box's six faces and turns items into LINE engraving on the part, unmirrored (the assembly already
@@ -55,7 +64,12 @@ kit; the process is discussed along the way, not settled up front.
 - 2026-11-08, holes: the library's 18 confirmed panel holes and windows as presets (`serve.py` /api/parts), plus round
   and rounded rectangle; cut through the part on a copy (the parts are cached), in the 3D and on the sheets.
 
+- 2026-11-08, edge connectors: the library's six side connectors as wall openings at a board height per wall.
+
 ## Defaults set without asking
+- An edge connector's opening: its library notch's width where the notch runs out past the body (the measured fit
+  at the board's edge), from 0.5 below the board's top to 0.5 above the part (the library's own air, DeviceWizard
+  D-60), ends fully rounded (the jack comes out a 6.0 circle on its tube's axis).
 - A hole's size is the finished hole: drawn at it when the export compensates the kerf per axis, else the burn inside
   it, as boxes.py's own holes. True circles and rounded corners (Bezier) in LightBurn.
 - At least 2 mm of wood between two holes (HOLE_WEB); an engraving across a hole is red. Duplicating a hole puts the

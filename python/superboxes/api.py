@@ -11,6 +11,7 @@ A request:
      "options": {"labels_engrave": false, "mark": {"enabled": true, "text": null, "part": null},
                  "rest_cuts": true},          # a last layer cuts the rest wood free (sheets.rest_pieces)
      "faces": {"top": [item, ...], ...},      # the face editor's items per face (faces.py)
+     "boards": {"front": 6.6, ...},           # per wall: the board's top above the inside floor, mm (faces.py)
      "draft": true}                   # build only: a slider is being dragged - the mark keeps its last spot
 """
 import json
@@ -117,7 +118,7 @@ def _decorations(req, parts, asm, info, draft=False):
     """(parts, deco, face info, warnings): the parts with the face editor's holes cut (copies), what's engraved on
     each - labels, the maker's mark (clear of the face editor's items and holes on its part) and the face editor's
     items (req["faces"]) - and the faces for the editor, each with the mark's lines if it's there."""
-    face_deco, face_info, found, holes = F.decorate(parts, asm, req.get("faces"), info["thickness"])
+    face_deco, face_info, found, holes = F.decorate(parts, asm, req.get("faces"), info["thickness"], req.get("boards"))
     parts = F.with_holes(parts, holes, bool(info.get("comp")), float(info.get("burn") or 0.0))
     deco, warnings = X.decorations(parts, req.get("options") or {}, info["thickness"], req["generator"], draft,
                                    avoid=F.footprints(face_deco), default_part=_mark_part(face_info))

@@ -419,9 +419,58 @@ def _hole_shape(v):
     return None
 
 
+EDGE_AIR = 0.5      # mm of air below the board's top and above a side connector (the library's own, DeviceWizard D-60)
+
+
+def _points(shape):
+    """The vertices of a library shape (a rect, or subpaths of M/L/C segments), in nm."""
+    if not isinstance(shape, dict):
+        return []
+    if isinstance(shape.get("min"), dict) and isinstance(shape.get("max"), dict):
+        lo, hi = shape["min"], shape["max"]
+        return [(lo["x"], lo["y"]), (hi["x"], lo["y"]), (hi["x"], hi["y"]), (lo["x"], hi["y"])]
+    pts = []
+    for sp in shape.get("subpaths") or []:
+        for seg in sp.get("segs") or []:
+            if len(seg) >= 3 and isinstance(seg[-1], (int, float)):
+                pts.append((seg[-2], seg[-1]))
+    return pts
+
+
+def _edge_opening(props):
+    """A side connector's opening in a wall, from its confirmed notch (the opening at the board's edge, as measured
+    for DeviceWizard's cases) and its height above the board: {"shape": "rect", "w", "h", "r", "lift"} in mm, or None.
+    The notch runs out past the body on one side: its width there is the opening's width; the opening reaches from
+    EDGE_AIR below the board's top ("lift") to EDGE_AIR above the part, ends fully rounded."""
+    ci, height = props.get("case_interface") or {}, props.get("height_above_pcb") or {}
+    body = props.get("body_outline") or {}
+    if ci.get("status") != "confirmed" or height.get("status") != "confirmed" or not body.get("value"):
+        return None
+    notches = [c for c in (ci.get("value") if isinstance(ci.get("value"), list) else [ci.get("value")])
+               if isinstance(c, dict) and c.get("kind") == "notch"]
+    bpts = _points(body["value"])
+    if not notches or not bpts or not isinstance(height.get("value"), (int, float)):
+        return None
+    pts = _points(notches[0].get("profile"))
+    if not pts:
+        return None
+    bx, by = [p[0] for p in bpts], [p[1] for p in bpts]
+    px, py = [p[0] for p in pts], [p[1] for p in pts]
+    sides = [(min(by) - min(py), 1, min(py), -1), (max(py) - max(by), 1, max(py), 1),
+             (min(bx) - min(px), 0, min(px), -1), (max(px) - max(bx), 0, max(px), 1)]
+    _beyond, axis, end, sign = max(sides)
+    across = [p[1 - axis] for p in pts if abs(p[axis] - end) <= 0.5e6]
+    w = (max(across) - min(across)) / 1e6
+    h = height["value"] / 1e6 + 2 * EDGE_AIR
+    if w <= 0:
+        return None
+    return {"shape": "rect", "w": round(w, 3), "h": round(h, 3), "r": round(min(w, h) / 2, 3), "lift": -EDGE_AIR}
+
+
 def part_holes(root=None):
-    """[{"code", "name", "kind": "hole" | "window", shape fields}] for every part with a confirmed panel hole or
-    window, sorted by name; [] without the library."""
+    """[{"code", "name", "kind": "hole" | "window" | "edge", shape fields}] for every part with a confirmed panel hole
+    or window, and every side connector with a confirmed edge notch ("edge": an opening in a wall at the board, with
+    its "lift" from the board's top), sorted by name; [] without the library."""
     base = os.path.join(root or PARTS_DIR, "items", "part")
     out = []
     try:
@@ -436,7 +485,8 @@ def part_holes(root=None):
             if item.get("deprecated") or not revs:
                 continue
             with open(os.path.join(base, d, "revisions", revs[-1], "revision.json"), encoding="utf-8") as f:
-                props = (json.load(f).get("data") or {}).get("properties") or {}
+                data = json.load(f).get("data") or {}
+            props = data.get("properties") or {}
         except (OSError, ValueError):
             continue
         for key, kind in (("frontplate_hole", "hole"), ("frontplate_window", "window")):
@@ -444,6 +494,10 @@ def part_holes(root=None):
             shape = _hole_shape(prop.get("value")) if prop.get("status") == "confirmed" else None
             if shape:
                 out.append({"code": item.get("code", d), "name": item.get("name", d), "kind": kind, **shape})
+        if data.get("type") == "connector_side":
+            shape = _edge_opening(props)
+            if shape:
+                out.append({"code": item.get("code", d), "name": item.get("name", d), "kind": "edge", **shape})
     return sorted(out, key=lambda h: h["name"].lower())
 
 

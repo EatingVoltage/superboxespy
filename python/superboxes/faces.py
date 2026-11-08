@@ -20,7 +20,9 @@ keeps its place when the box changes size; text lines align to the anchor's side
 area: the outline less thickness + 1.5 mm from every edge (finger joints), as for the maker's mark.
 
 A hole is cut through the part (CUT): its size is the finished hole, the kerf taken care of like boxes.py's own holes,
-and it keeps HOLE_WEB of wood to the next hole. It becomes part of the part (with_holes), so the 3D, the sheets and
+and it keeps HOLE_WEB of wood to the next hole. A hole with "board" is an edge connector's opening in a wall: it sits
+at the board's height on that wall (the request's "boards": {role: mm of the board's top above the inside floor}),
+"lift" from the board's top to the opening's bottom, and only moves sideways. It becomes part of the part (with_holes), so the 3D, the sheets and
 the maker's mark see it; an engraving across a hole is red.
 """
 import copy
@@ -46,6 +48,7 @@ HATCH = SC.TITLE_HATCH           # mm between hatch lines, +-45 degrees (the sta
 LINE_GAP = 1.4                   # line pitch of multi-line text, in cap heights
 KEEP_OUT = 1.5                   # mm beyond the thickness kept clear along every edge (finger joints)
 HOLE_WEB = 2.0                   # mm of wood at least between two holes
+EDGE_AIR = 0.5                   # an edge connector's opening starts this far below the board's top (serve.EDGE_AIR)
 ARC = 0.5522847498               # cubic Bezier handle for a quarter circle
 
 
@@ -60,6 +63,7 @@ class Face:
     outline: object              # the part's shape in view coordinates
     free: object                 # where items may go, view coordinates
     covered: object = None       # what other parts cover of it on the closed box (a lid's rim), view coordinates
+    floor: object = None         # a wall's: the box's inside floor, view y (where a board's height counts from)
 
     def to_view(self, g):
         a, b, c, d = self.rot.ravel()
@@ -110,6 +114,9 @@ def _face(role, p, m, parts, asm, t):
     face.covered = _covered(face, m, parts, asm, t)
     if not face.covered.is_empty:
         face.free = face.free.difference(face.covered.buffer(KEEP_OUT))
+    lo = (asm.get("inside") or {}).get("lo")
+    if lo is not None and role in ("front", "back", "left", "right"):
+        face.floor = lo[2] - m[2, 3] + face.off[1]          # view y = Z . world - Z . origin + offset
     return face
 
 
@@ -259,11 +266,12 @@ def _round(g):
     return [[[round(x, 2), round(y, 2)] for x, y in ls.coords] for ls in lbrn._lines(g)]
 
 
-def decorate(parts, asm, faces_req, t):
+def decorate(parts, asm, faces_req, t, boards=None):
     """The face editor's items as decorations: ({part index: [(layer, lines)]} in part coordinates, for the sheets,
     the 3D and LightBurn; {role: face info} for the editor: the face's size, outline, free area and what covers it,
     and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face};
-    {part index: [(dims, centre)]} the holes, part coordinates, for with_holes)."""
+    {part index: [(dims, centre)]} the holes, part coordinates, for with_holes). boards: {role: the board's top above
+    the inside floor, mm} for the edge connectors' openings on that wall."""
     faces = find(parts, asm, t)
     deco, info, holes = {}, {}, {}
     for role, face in faces.items():
@@ -271,10 +279,21 @@ def decorate(parts, asm, faces_req, t):
         reqs = (faces_req or {}).get(role, [])
         # the holes first: an engraving across one is red
         cut = []
+        board = (boards or {}).get(role)
         for item in (it for it in reqs if it.get("kind") == "hole"):
             got = place(item, face)
-            if got:
-                cut.append((item, got[0], got[2]))
+            if not got:
+                continue
+            if item.get("board"):                      # an edge connector: at the board, only its x is the item's
+                if face.floor is None or not isinstance(board, (int, float)):
+                    items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
+                                      "error": "set the board's height on this wall" if face.floor is not None
+                                      else "only on a wall of a box with a floor"})
+                    continue
+                poly, lines, (x0, y0, x1, y1) = got
+                dy = face.floor + board + float(item.get("lift", -EDGE_AIR)) - y0
+                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy))
+            cut.append((item, got[0], got[2]))
         here = []
         for item, poly, bounds in cut:
             others = [q for it, q, _b in cut if it is not item]
@@ -304,7 +323,10 @@ def decorate(parts, asm, faces_req, t):
                               "lines": _round(engraved)})
         info[role] = {"part": face.part, "w": round(face.w, 2), "h": round(face.h, 2),
                       "outline": _rings(face.outline), "free": _rings(face.free), "covered": _rings(face.covered),
-                      "items": items_out, "fixed": []}
+                      "items": items_out, "fixed": [],
+                      "floor": None if face.floor is None else round(face.floor, 2),
+                      "board": None if face.floor is None or not isinstance(board, (int, float))
+                      else round(face.floor + board, 2)}
     return deco, info, faces, holes
 
 

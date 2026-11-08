@@ -109,7 +109,11 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   switches, slide pots, the OLED window... The size is the finished hole: the kerf is taken care of as for boxes.py's
   own holes (true circles and rounded corners in LightBurn). A hole cuts through the part on the sheets and in the 3D,
   keeps 2 mm of wood to the next hole, and an engraving across it turns red. **Duplicate** puts the copy beside it.
-  Jacks and USB-C at a board's edge aren't in the library as wall holes yet: use a round or rectangle there.
+  **Edge connectors** (the jack, USB-C, USB-A, the RP2350 module, the XH header) go in a wall at the board: set
+  **Board at … mm above the floor** on that wall once (standoff + board, its top surface) and pick the part under
+  **Edge connectors, at the board**. Its opening is the library's measured notch width at the board's edge (the
+  jack 6.0, USB-C 10.2) and reaches from 0.5 below the board's top to 0.5 above the part, ends rounded; it stays at
+  the board (a dashed line) and only moves sideways.
 
 ## The stamp case
 
@@ -232,9 +236,8 @@ of the box. ABox's over-the-top lid sits on the box (Lift cover takes it off); i
 beside the box.
 
 Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
-1. The CANVAS starter-kit box's lid test cut (`.grill/face-editor.md`), then the face editor's next steps: wall holes
-   for edge connectors from the library's case notches, inside faces. The stamp case keeps its own board editor for
-   now.
+1. The CANVAS starter-kit box's lid test cut (`.grill/face-editor.md`), then the face editor's next steps: inside
+   faces (two pages, a flip), the thumb notch. The stamp case keeps its own board editor for now.
 2. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
 A stamp-case build after an edit met its 300 ms: 0.19 s for 9 stamps, 0.25-0.27 s for 16; Re-pack of 16 took 1.7 s

@@ -289,6 +289,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .face-svg .face-item { stroke-dasharray: none; }
 .face-svg .face-covered { fill: rgba(60, 50, 40, .28); stroke: none; pointer-events: none; }
 .face-svg .face-fixed { opacity: .55; pointer-events: none; }
+.face-svg .face-board { stroke: #3c6b4f; stroke-width: 1px; stroke-dasharray: 6 3; vector-effect: non-scaling-stroke; pointer-events: none; }
 .face-svg .face-pin { stroke: var(--accent); stroke-width: 1px; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; pointer-events: none; }
 .face-svg .face-spot { fill: var(--accent); pointer-events: none; }
 .board-bar .face-text { width: 220px; resize: vertical; font: inherit; }

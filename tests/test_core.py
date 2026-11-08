@@ -492,6 +492,26 @@ class Faces(unittest.TestCase):
                ["faces"]["front"]["items"]}
         self.assertEqual(got, {"a": False, "b": False, "t": False})
 
+    def test_edge_connectors_sit_at_the_board(self):
+        usb = {"id": "usb", "kind": "hole", "shape": "rect", "w": 10.2, "h": 4.26, "r": 2.13, "board": True,
+               "lift": -0.5, "anchor": "c", "dx": 20, "dy": 30}
+        req = self.req()
+        req["faces"] = {"back": [usb], "top": [dict(usb, id="top")]}
+        got = api.build(req)["faces"]
+        self.assertEqual(got["back"]["items"][0]["error"], "set the board's height on this wall")
+        self.assertEqual(got["top"]["items"][0]["error"], "only on a wall of a box with a floor")
+        req["boards"] = {"back": 8.0}
+        back = api.build(req)["faces"]["back"]
+        x0, y0, x1, y1 = back["items"][0]["bounds"]
+        self.assertAlmostEqual(back["board"] - back["floor"], 8.0, places=3)
+        self.assertAlmostEqual(y0, back["board"] - 0.5, places=3)               # dy is ignored: it sits at the board
+        self.assertAlmostEqual(y1, back["board"] + 3.76, places=3)
+        self.assertAlmostEqual((x0 + x1) / 2, back["w"] / 2 + 20, places=3)     # dx is its own
+        self.assertFalse(back["items"][0]["bad"])
+        del req["faces"]["top"]                             # (red: it would block the export)
+        req["layout"] = api.build(req)["placements"]
+        self.assertTrue(api.export(req)["ok"])
+
     def test_the_lid_is_engraved_as_seen_from_outside(self):
         req = self.req(items=[{"id": "t", "kind": "text", "text": "CANVAS", "size": 12, "anchor": "c"}])
         b = api.build(req)

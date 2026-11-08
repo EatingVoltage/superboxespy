@@ -28,6 +28,7 @@ const S = {
   kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
   faces: {} as Faces,            // the face editor's items per face (not for the stamp case: its boards are its faces)
+  boards: {} as Record<string, number>,   // per wall: the board's top above the inside floor, mm
   home: null as string | null,   // the box's own file on disk (serve.py): Save and the exports go beside it
   options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true } as Options,
   notes: "",
@@ -291,7 +292,7 @@ function changed(final: boolean) {
 function request(layout: Placement[] | null) {
   return {
     generator: S.generator, params: S.params, material: material(), sheet: S.sheet,
-    layout, options: S.options, name: S.name, faces: S.faces,
+    layout, options: S.options, name: S.name, faces: S.faces, boards: S.boards,
   };
 }
 
@@ -367,7 +368,7 @@ const H = { undo: [] as string[], redo: [] as string[], last: "" };
 
 function snapshot() {
   return JSON.stringify({ params: S.params, layout: S.placements.filter((p) => S.manual.has(p.part)), options: S.options,
-    faces: S.faces });
+    faces: S.faces, boards: S.boards });
 }
 
 function remember() {
@@ -392,6 +393,7 @@ function restore(snap: string) {
   S.manual = new Set(o.layout.map((p: Placement) => p.part));
   S.options = o.options;
   S.faces = o.faces ?? {};
+  S.boards = o.boards ?? {};
   H.last = snap;
   S.dirty = true;
   renderParamPanel();
@@ -452,6 +454,13 @@ const editor = new sc.BoardEditor($("board-tabs"), $("board"), $("board-bar"), s
 const faceEditor = new FaceEditor($("face-tabs"), $("face"), $("face-bar"), {
   build: () => S.build,
   faces: () => S.faces,
+  boards: () => S.boards,
+  setBoard(role, mm) {
+    S.boards = { ...S.boards };
+    if (mm == null) delete S.boards[role];
+    else S.boards[role] = mm;
+    changed(true);
+  },
   commit(faces) {
     S.faces = faces;
     changed(true);
@@ -510,7 +519,8 @@ function config(): BoxConfig {
           ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
     sheet: S.sheet,
     layout: S.manual.size ? S.placements : null,
-    options: S.options, ...(Object.keys(S.faces).length ? { faces: S.faces } : {}), notes: S.notes,
+    options: S.options, ...(Object.keys(S.faces).length ? { faces: S.faces } : {}),
+    ...(Object.keys(S.boards).length ? { boards: S.boards } : {}), notes: S.notes,
     saved: new Date().toISOString(),
   };
 }
@@ -545,6 +555,7 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
   };
   S.notes = c.notes ?? "";
   S.faces = isStamp() ? {} : structuredClone(c.faces ?? {});
+  S.boards = isStamp() ? {} : { ...(c.boards ?? {}) };
   S.placements = c.layout ?? [];
   S.manual = new Set((c.layout ?? []).map((p) => p.part));
   S.fileVersion = isStamp() ? null : c.boxes_version ?? null;   // boxes.py doesn't make stamp cases
