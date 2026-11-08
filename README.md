@@ -117,6 +117,13 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   A **Thumb notch** (also under **Add hole…**) cuts a half-round notch into a plain edge, to lift a lid: drop it on a
   wall's top or bottom edge. On a shoebox (the over-the-top lid) put it in a wall's top edge, deeper than the lid's
   rim (the grey strip), so a finger reaches the rim's edge. An edge with finger joints refuses it (red).
+- **Inside faces**: **Outside / Inside** in a face's bar shows the face from inside the box (its other side; a
+  message under the lid). Text, logos and SVG go there too (holes go through anyway: outside); what meets the face
+  inside (the floor, the side walls, the walls under a lid) is kept clear, grey. A sheet with inside engraving gets a
+  page of its own before its normal page, mirrored: lay the sheet into a corner stop at the lower left and run
+  "Sheet N: inside first", turn it over left to right back into the stop, run "Sheet N". LightBurn's Notes say so. A
+  sheet that isn't 297 mm wide shifts the inside engraving by the difference; make a registration test cut first.
+  The 3D shows the inside engraving on the inner face, the sheets show it faint (it's underneath as cut).
 
 ## The stamp case
 
@@ -239,8 +246,8 @@ of the box. ABox's over-the-top lid sits on the box (Lift cover takes it off); i
 beside the box.
 
 Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
-1. The CANVAS starter-kit box's lid test cut (`.grill/face-editor.md`), then the face editor's next steps: inside
-   faces (two pages, a flip). The stamp case keeps its own board editor for now.
+1. Test cuts: the CANVAS starter-kit box's lid (`.grill/face-editor.md`), then a flip registration cut for inside
+   faces. The stamp case keeps its own board editor for now.
 2. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
 A stamp-case build after an edit met its 300 ms: 0.19 s for 9 stamps, 0.25-0.27 s for 16; Re-pack of 16 took 1.7 s

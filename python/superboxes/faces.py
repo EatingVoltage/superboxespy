@@ -20,6 +20,12 @@ The item's own anchor point (the same spot of its bounding box) sits (dx, dy) fr
 keeps its place when the box changes size; text lines align to the anchor's side. An item must stay inside the free
 area: the outline less thickness + 1.5 mm from every edge (finger joints), as for the maker's mark.
 
+Inside faces ("top.in", "front.in", ...: .grill/face-editor.md, two pages with a flip) are the same parts seen from
+inside the box: the outside view mirrored left to right, up the same. Their items engrave the part's other side (the
+face down on the laser) and come out as "inside" decorations, which the export puts on a page of their own, mirrored
+for the sheet turned over left to right. What lies inside a face (the floor, the side walls' ends, a partition) is
+kept clear there, as a lid's rim is outside. Holes and notches go through anyway: they belong to the outside.
+
 A hole is cut through the part (CUT): its size is the finished hole, the kerf taken care of like boxes.py's own holes,
 and it keeps HOLE_WEB of wood to the next hole. A hole with "board" is an edge connector's opening in a wall: it sits
 at the board's height on that wall (the request's "boards": {role: mm of the board's top above the inside floor}),
@@ -65,6 +71,7 @@ class Face:
     outline: object              # the part's shape in view coordinates
     free: object                 # where items may go, view coordinates
     covered: object = None       # what other parts cover of it on the closed box (a lid's rim), view coordinates
+    inside: bool = False         # seen from inside the box (the part's other side)
     floor: object = None         # a wall's: the box's inside floor, view y (where a board's height counts from)
 
     def to_view(self, g):
@@ -98,38 +105,41 @@ def find(parts, asm, t):
             face = _face(role, p, m, parts, asm, t)
             if face.covered.area <= 0.5 * face.outline.area:
                 out[role] = face
+                inner = _face(role, p, m, parts, asm, t, inside=True)
+                if inner.covered.area <= 0.5 * inner.outline.area:     # a drawer's floor: the drawer sits on it
+                    out[role + ".in"] = inner
                 break
     return out
 
 
-def _face(role, p, m, parts, asm, t):
+def _face(role, p, m, parts, asm, t, inside=False):
     up = UP[role]
-    right = np.cross(up, NORMAL[role])
+    right = np.cross(up, NORMAL[role]) * (-1 if inside else 1)     # from inside, the outside's left is on the right
     rot = np.array([[right @ m[:, 0], right @ m[:, 1]], [up @ m[:, 0], up @ m[:, 1]]])
-    face = Face(role, p.index, rot, np.zeros(2), 0, 0, None, None)
+    face = Face(role + (".in" if inside else ""), p.index, rot, np.zeros(2), 0, 0, None, None, inside=inside)
     outline = face.to_view(p.shape)
     x0, y0, x1, y1 = outline.bounds
     face.off = np.array([-x0, -y0])
     face.outline = affinity.translate(outline, -x0, -y0)
     face.w, face.h = x1 - x0, y1 - y0
     face.free = face.outline.buffer(-(t + KEEP_OUT))            # as the maker's mark keeps clear (export.mark_spot)
-    face.covered = _covered(face, m, parts, asm, t)
+    face.covered = _covered(face, m, parts, asm, t, right, up)
     if not face.covered.is_empty:
         face.free = face.free.difference(face.covered.buffer(KEEP_OUT))
     lo = (asm.get("inside") or {}).get("lo")
-    if lo is not None and role in ("front", "back", "left", "right"):
+    if lo is not None and role in ("front", "back", "left", "right") and not inside:
         face.floor = lo[2] - m[2, 3] + face.off[1]          # view y = Z . world - Z . origin + offset
     return face
 
 
-def _covered(face, m, parts, asm, t):
-    """What other parts cover of the face on the closed box, view coordinates: every placed part whose material lies
-    wholly outside the face's outer plane (an over-the-top lid's rim in front of a wall), as the hull of its outline
-    projected onto the face."""
-    n = NORMAL[face.role]
-    up = UP[face.role]
-    right = np.cross(up, n)
+def _covered(face, m, parts, asm, t, right, up):
+    """What other parts cover of the face on the closed box, view coordinates (axes right, up): every placed part
+    whose material lies wholly outside the face's outer plane (an over-the-top lid's rim in front of a wall); seen from
+    inside, every one inside its inner plane but for the fingers it puts into the face (the floor, the side walls'
+    ends, a partition). Each as the hull of its outline projected onto the face."""
+    n = NORMAL[face.role.split(".")[0]]
     d0 = t + n @ m[:, 3]                       # the outer face: n . x there (n is the matrix's depth column)
+    d_in = n @ m[:, 3]                         # the inner face
     regions = []
     for q, ql in zip(parts, asm.get("parts", [])):
         if q.index == face.part or ql.get("group") == "loose" or q.shape is None or q.shape.is_empty:
@@ -138,7 +148,11 @@ def _covered(face, m, parts, asm, t):
         polys = list(q.shape.geoms) if hasattr(q.shape, "geoms") else [q.shape]
         xy = np.concatenate([np.asarray(g.exterior.coords)[:, :2] for g in polys])
         pts = np.concatenate([np.column_stack([xy, np.full(len(xy), z), np.ones(len(xy))]) for z in (0.0, t)]) @ mq.T
-        if (pts @ n).min() < d0 - 0.05:
+        depth = pts @ n
+        # inside: it reaches the inner face (its fingers at most through it) and lies inside; the floor under a lid
+        # doesn't reach the lid, so it covers nothing there
+        if (face.inside and not (d_in - 0.05 <= depth.max() <= d_in + t + 0.05 and depth.min() < d_in - 0.05)
+                or not face.inside and depth.min() < d0 - 0.05):
             continue
         vx = pts @ right - right @ m[:, 3] + face.off[0]
         vy = pts @ up - up @ m[:, 3] + face.off[1]
@@ -275,17 +289,22 @@ def decorate(parts, asm, faces_req, t, boards=None):
     """The face editor's items as decorations: ({part index: [(layer, lines)]} in part coordinates, for the sheets,
     the 3D and LightBurn; {role: face info} for the editor: the face's size, outline, free area and what covers it,
     and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face};
-    {part index: [(dims, centre)]} the holes, part coordinates, for with_holes). boards: {role: the board's top above
+    {part index: [(dims, centre)]} the holes, part coordinates, for with_holes; {part index: [(layer, lines)]} what
+    the inside faces engrave on the parts' other side, part coordinates). boards: {role: the board's top above
     the inside floor, mm} for the edge connectors' openings on that wall."""
     faces = find(parts, asm, t)
-    deco, info, holes = {}, {}, {}
+    deco, info, holes, deco_in = {}, {}, {}, {}
+    cut_parts = {}                                     # part index: its holes, part coordinates (inside faces avoid them)
     for role, face in faces.items():
         items_out = []
         reqs = (faces_req or {}).get(role, [])
         # the holes first: an engraving across one is red
         cut = []
         board = (boards or {}).get(role)
-        for item in (it for it in reqs if it.get("kind") == "hole"):
+        for item in (it for it in reqs if it.get("kind") == "hole" and face.inside):
+            items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
+                              "error": "a hole goes through: put it on the outside"})
+        for item in (it for it in reqs if it.get("kind") == "hole" and not face.inside):
             got = place(item, face)
             if not got:
                 continue
@@ -324,6 +343,10 @@ def decorate(parts, asm, faces_req, t, boards=None):
             here.append(shown)
             items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in shown.bounds], "bad": bad,
                               "hole": True, "lines": _round(_outline_lines(shown))})
+        if here:
+            cut_parts[face.part] = unary_union([cut_parts.get(face.part, Polygon())] + [face.to_part(g) for g in here])
+        elif face.inside and face.part in cut_parts:     # the outside's holes, seen from inside
+            here = [face.to_view(cut_parts[face.part])]
         holes_view = unary_union(here).buffer(1.0) if here else None
         for item in (it for it in reqs if it.get("kind") != "hole"):
             try:
@@ -337,7 +360,7 @@ def decorate(parts, asm, faces_req, t, boards=None):
             polys, lines, bounds = got
             engraved = unary_union([g for g in (_outline_lines(polys), lines) if not g.is_empty])
             bad = not face.free.contains(box(*bounds)) or (holes_view is not None and holes_view.intersects(engraved))
-            deco.setdefault(face.part, []).append((M.LINE, face.to_part(engraved)))
+            (deco_in if face.inside else deco).setdefault(face.part, []).append((M.LINE, face.to_part(engraved)))
             items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad,
                               "lines": _round(engraved)})
         info[role] = {"part": face.part, "w": round(face.w, 2), "h": round(face.h, 2),
@@ -346,7 +369,7 @@ def decorate(parts, asm, faces_req, t, boards=None):
                       "floor": None if face.floor is None else round(face.floor, 2),
                       "board": None if face.floor is None or not isinstance(board, (int, float))
                       else round(face.floor + board, 2)}
-    return deco, info, faces, holes
+    return deco, info, faces, holes, deco_in
 
 
 def _notch_ok(disc, r, face, t):
@@ -426,6 +449,8 @@ def footprints(deco):
 def show_fixed(info, faces, deco):
     """What else is engraved on a face (the maker's mark, LINE), in view coordinates, for the editor to show."""
     for role, face in faces.items():
+        if face.inside:                                # the mark and labels are on the outside
+            continue
         lines = [face.to_view(g) for layer, g in deco.get(face.part, []) if layer == M.LINE and not g.is_empty]
         info[role]["fixed"] = [ln for g in lines for ln in _round(g)]
 

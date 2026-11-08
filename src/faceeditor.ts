@@ -93,6 +93,7 @@ const newId = () => `i${Date.now().toString(36)}${(nextId++).toString(36)}`;
 
 export class FaceEditor {
   private tab = "sheets";              // a face role, or "sheets"
+  private side: "out" | "in" = "out";  // the face seen from outside, or from inside the box (its other side)
   private selected: string | null = null;
   private active = false;
   private svgRoot: SVGSVGElement;
@@ -123,7 +124,7 @@ export class FaceEditor {
     return this.host.build()?.faces ?? {};
   }
 
-  private items(role = this.tab): FaceItem[] {
+  private items(role = this.faceKey): FaceItem[] {
     return this.host.faces()[role] ?? [];
   }
 
@@ -142,8 +143,21 @@ export class FaceEditor {
     this.host.showSheets(!on);
   }
 
+  /** The faces' key of what's shown: "front", or "front.in" from inside. */
+  private get faceKey(): string {
+    return this.tab + (this.side === "in" ? ".in" : "");
+  }
+
+  private setSide(side: "out" | "in") {
+    this.side = side;
+    this.selected = null;
+    this.draw();
+    this.renderBar();
+  }
+
   setTab(role: string) {
     this.tab = role;
+    this.side = "out";
     this.selected = null;
     this.renderTabs();
     this.showFace(role !== "sheets");
@@ -156,9 +170,9 @@ export class FaceEditor {
     const faces = this.host.faces();
     this.tabs.replaceChildren();
     for (const role of ["sheets", ...ORDER.filter((r) => info[r] && READY.has(r))]) {
-      const n = role === "sheets" ? 0 : (faces[role] ?? []).length;
+      const n = role === "sheets" ? 0 : (faces[role] ?? []).length + (faces[role + ".in"] ?? []).length;
       const b = h("button", { role: "tab", "aria-selected": this.tab === role,
-        title: role === "sheets" ? "The parts on the sheets" : `What goes on the ${role}, seen from outside` },
+        title: role === "sheets" ? "The parts on the sheets" : `What goes on the ${role}, outside and inside` },
         role === "sheets" ? "Sheets" : TITLE[role] + (n ? ` · ${n}` : ""));
       b.onclick = () => this.setTab(role);
       this.tabs.append(b);
@@ -168,7 +182,7 @@ export class FaceEditor {
 
   // ---------------------------------------------------------------- drawing
   private draw() {
-    const f = this.info()[this.tab];
+    const f = this.info()[this.faceKey];
     if (!f || this.root.hidden) return;
     const pad = Math.max(10, 0.08 * Math.max(f.w, f.h));
     this.svgRoot.setAttribute("viewBox", `${-pad} ${-(f.h + pad)} ${f.w + 2 * pad} ${f.h + 2 * pad}`);
@@ -277,7 +291,7 @@ export class FaceEditor {
 
   /** Move an item by (dx, dy) mm and pin it where it lands. */
   private moveBy(id: string, dx: number, dy: number) {
-    const f = this.info()[this.tab];
+    const f = this.info()[this.faceKey];
     const it = f?.items.find((i) => i.id === id);
     if (!f || !it?.bounds) return;
     const b = [it.bounds[0] + dx, it.bounds[1] + dy, it.bounds[2] + dx, it.bounds[3] + dy];
@@ -287,11 +301,11 @@ export class FaceEditor {
   // ---------------------------------------------------------------- edits
   private change(id: string, patch: Partial<FaceItem>) {
     const faces = structuredClone(this.host.faces());
-    const list = faces[this.tab] ?? [];
+    const list = faces[this.faceKey] ?? [];
     const it = list.find((i) => i.id === id);
     if (!it) return;
     Object.assign(it, patch);
-    faces[this.tab] = list;
+    faces[this.faceKey] = list;
     this.host.commit(faces);
   }
 
@@ -305,12 +319,12 @@ export class FaceEditor {
       const m = (new DOMParser().parseFromString(text, "image/svg+xml").documentElement.getAttribute("height") ?? "")
         .match(/^\s*([\d.]+)\s*(mm|cm|in)\s*$/);
       const mm = m ? Number(m[1]) * { mm: 1, cm: 10, in: 25.4 }[m[2] as "mm"] : 0;
-      const f = this.info()[this.tab];
+      const f = this.info()[this.faceKey];
       const size = mm > 0 && f ? Math.min(mm, f.h * 0.8) : 30;
       const item: FaceItem = { id: newId(), kind: "svg", svg: text, name: file.name, size: Math.round(size * 2) / 2,
         style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 };
       const faces = structuredClone(this.host.faces());
-      faces[this.tab] = [...(faces[this.tab] ?? []), item];
+      faces[this.faceKey] = [...(faces[this.faceKey] ?? []), item];
       this.selected = item.id;
       this.host.commit(faces);
     };
@@ -332,7 +346,7 @@ export class FaceEditor {
 
   private addItem(item: FaceItem) {
     const faces = structuredClone(this.host.faces());
-    faces[this.tab] = [...(faces[this.tab] ?? []), item];
+    faces[this.faceKey] = [...(faces[this.faceKey] ?? []), item];
     this.selected = item.id;
     this.host.commit(faces);
   }
@@ -352,7 +366,7 @@ export class FaceEditor {
         (p.kind === "edge" ? edge : panel).append(h("option", { value: `p${k}` }, label));
       });
       sel.append(panel);
-      if (edge.children.length && this.info()[this.tab]?.floor != null) sel.append(edge);
+      if (edge.children.length && this.info()[this.faceKey]?.floor != null) sel.append(edge);
     });
     sel.onchange = () => {
       const v = sel.value;
@@ -363,7 +377,7 @@ export class FaceEditor {
   }
 
   add(kind: "text" | "logo") {
-    const f = this.info()[this.tab];
+    const f = this.info()[this.faceKey];
     if (!f) return;
     const logos = this.host.build()?.logos ?? [];
     const item: FaceItem = kind === "text"
@@ -371,7 +385,7 @@ export class FaceEditor {
       : { id: newId(), kind, logo: logos.find((l) => l.includes("lite")) ?? logos[0] ?? "", size: 20, rot: 0,
           anchor: "tl", dx: 15, dy: -15 };
     const faces = structuredClone(this.host.faces());
-    faces[this.tab] = [...(faces[this.tab] ?? []), item];
+    faces[this.faceKey] = [...(faces[this.faceKey] ?? []), item];
     this.selected = item.id;
     this.host.commit(faces);
   }
@@ -379,8 +393,8 @@ export class FaceEditor {
   private remove() {
     if (!this.selected) return;
     const faces = structuredClone(this.host.faces());
-    faces[this.tab] = (faces[this.tab] ?? []).filter((i) => i.id !== this.selected);
-    if (!faces[this.tab].length) delete faces[this.tab];
+    faces[this.faceKey] = (faces[this.faceKey] ?? []).filter((i) => i.id !== this.selected);
+    if (!faces[this.faceKey].length) delete faces[this.faceKey];
     this.selected = null;
     this.host.commit(faces);
   }
@@ -393,7 +407,7 @@ export class FaceEditor {
       ? { ...structuredClone(it), id: newId(), dx: it.dx + (it.shape === "rect" ? it.w ?? 10 : it.d ?? 6) + 4 }
       : { ...structuredClone(it), id: newId(), dy: it.dy - Math.max(4, it.size * 1.5) };
     const faces = structuredClone(this.host.faces());
-    faces[this.tab] = [...(faces[this.tab] ?? []), copy];
+    faces[this.faceKey] = [...(faces[this.faceKey] ?? []), copy];
     this.selected = copy.id;
     this.host.commit(faces);
   }
@@ -422,7 +436,7 @@ export class FaceEditor {
 
   // ---------------------------------------------------------------- the bar under the face
   private renderBar() {
-    const f = this.info()[this.tab];
+    const f = this.info()[this.faceKey];
     if (!f) return;
     const it = this.items().find((i) => i.id === this.selected);
     const btn = (label: string, title: string, run: () => void) => {
@@ -431,6 +445,15 @@ export class FaceEditor {
       return b;
     };
     const kids: (Node | string)[] = [];
+    const sides = h("span", { class: "seg", role: "group", "aria-label": "Seen from" });
+    for (const [v, label, title] of [["out", "Outside", "The face as seen from outside the box"],
+      ["in", "Inside", "Its other side, as seen from inside the box: engraved on a page of its own before the sheet's, " +
+        "the sheet turned over left to right"]] as const) {
+      const b = h("button", { "aria-pressed": this.side === v, title }, label);
+      b.onclick = () => this.setSide(v);
+      sides.append(b);
+    }
+    kids.push(sides);
     if (!it) {
       if (f.floor != null) {                          // a wall: where the board with its edge connectors sits
         const role = this.tab;
@@ -445,11 +468,15 @@ export class FaceEditor {
         btn("Add logo", "An eV logo, engraved", () => this.add("logo")),
         btn("Import SVG", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +
           "The file is kept in the box.", () => this.importSvg()),
-        this.holeMenu(),
-        h("span", { class: "hint" }, `${TITLE[this.tab]}, seen from outside: ${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm. ` +
+        this.side === "out" ? this.holeMenu() : "",
+        h("span", { class: "hint" }, `${TITLE[this.tab]}, seen from ${this.side === "in" ? "inside" : "outside"}: ` +
+          `${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm. ` +
+          (this.side === "in" ? "Engraved on the part's other side: the export adds a page before this sheet's, for " +
+            "the sheet turned over. " : "") +
           "Drag an item: it keeps its place from the nearest corner, edge or the centre when the box changes size. " +
           "The dashed line keeps clear of the edges and finger joints" +
-          (f.covered.length ? "; the grey part is covered on the closed box (a lid's rim)." : ".") +
+          (f.covered.length ? (this.side === "in" ? "; the grey part is where other parts meet it inside."
+            : "; the grey part is covered on the closed box (a lid's rim).") : ".") +
           (f.fixed.length ? " The maker's mark moves out of the items' way." : "")));
       this.bar.replaceChildren(...kids);
       return;
@@ -486,7 +513,8 @@ export class FaceEditor {
         h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), styleSel());
     } else if (it.kind === "hole") {
       kids.push(h("b", { title: it.shape === "notch" ? "A half-round notch in the edge, to lift a lid: drag it to the " +
-        "top or bottom edge" : "Cut through, at its finished size" },
+        "top or bottom edge. Under a lid's rim (grey) make it deeper than the rim, so a finger reaches the rim's edge"
+        : "Cut through, at its finished size" },
         it.part ?? (it.shape === "notch" ? "Thumb notch" : it.shape === "rect" ? "Rectangle hole" : "Round hole")));
       if (it.shape === "rect") {
         kids.push(num(it.w ?? 20, "Width, mm", (v) => this.change(it.id, { w: v }), 0.01, 0.5), h("span", {}, "×"),
@@ -509,7 +537,7 @@ export class FaceEditor {
       kids.push(sel, h("span", {}, "height"), num(it.size, "Logo height, mm", (v) => this.change(it.id, { size: v })),
         h("span", { class: "unit" }, "mm"));
     }
-    if (!(it.kind === "hole" && it.shape !== "rect")) {     // a round hole looks the same turned
+    if (!(it.kind === "hole" && (it.shape !== "rect" || it.board))) {   // round looks the same turned; at the board it stays
       kids.push(btn("Rotate", "R (Shift+R the other way)", () => this.change(it.id, { rot: (((it.rot ?? 0) + 90) % 360) as FaceItem["rot"] })));
     }
     kids.push(btn("Duplicate", "Ctrl+D", () => this.duplicate()), btn("Delete", "Del", () => this.remove()),

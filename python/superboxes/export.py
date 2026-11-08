@@ -259,13 +259,35 @@ def _time_txt(minutes):
     return ", ".join("%s %.1f min" % (k.split(" - ")[0], v) for k, v in minutes.items()) or "-"
 
 
+def inside_page(parts, on_sheet, inside, sheet):
+    """The evlaser parts of a sheet's inside page: what the inside faces engrave on the parts' other side, placed as
+    on the sheet, then mirrored about its middle, for the sheet turned over left to right against the stop at its
+    lower-left corner. [] when the sheet has none. (Top to bottom won't do: the parts near the bottom would land
+    above the 390 mm reach.)"""
+    sw = S.sheet_tuple(sheet)[0]
+    out = []
+    for pl in on_sheet:
+        p = parts[pl["part"]]
+        lines = [g for _layer, g in inside.get(pl["part"], []) if not g.is_empty]
+        if not lines:
+            continue
+        e = G.Part(p.name + " (inside)")
+        for g in lines:
+            e.add(M.LINE, "lines", affinity.scale(_on_sheet(g, p, pl), -1, 1, origin=(sw / 2, 0)))
+        out.append(e)
+    return out
+
+
 def project_files(name, title, parts, placements, deco, material, sheet, notes_extra="", previous=None, comp=None,
-                  rest_cuts=True):
+                  rest_cuts=True, inside=None):
     """The whole job as ONE LightBurn project, one page per sheet (LightBurn 2.2 pages), plus one SVG per sheet.
-    {"lbrn2": (filename, text), "svgs": [(filename, text)], "sheets": [{"parts", "minutes", "offcut", "pieces"}],
+    {"lbrn2": (filename, text), "svgs": [(filename, text)], "svg_sheets": [the sheet of each svg],
+    "sheets": [{"parts", "minutes", "offcut", "pieces"}],
     "kept": bool}. previous: text of the project's existing .lbrn2 - if LightBurn saved it, its layers are carried
     over. Layers belong to the project in LightBurn, so the carry-over covers every page. rest_cuts: a last layer
-    cuts each sheet's rest wood free as rectangles (sheets.rest_pieces)."""
+    cuts each sheet's rest wood free as rectangles (sheets.rest_pieces). inside: {part index: [(layer, lines)]} the
+    inside faces' engraving (part coordinates): a sheet with any gets a page before its own, mirrored for the sheet
+    turned over (inside_page), and the Notes say how."""
     st = S.sheet_tuple(sheet)
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     sizes = [(p.w, p.h) for p in parts]
@@ -275,14 +297,22 @@ def project_files(name, title, parts, placements, deco, material, sheet, notes_e
         evs = [placed_part(parts[pl["part"]], pl, deco.get(pl["part"], []), comp) for pl in on]
         G.check_sheet(evs, st, name="sheet %d" % (n + 1))     # before the rest-piece cuts: they reach the edges
         pieces, frame = rest_part(parts, on, sheet, comp) if rest_cuts else ([], None)
-        sheets.append((evs, frame, pieces))
-    key, mat, layers = material_layers(material, frame=any(frame for _, frame, _ in sheets))
-    pages, svgs, info = [], [], []
-    for n, (evs, frame, pieces) in enumerate(sheets):
+        back = inside_page(parts, on, inside or {}, sheet)
+        if back:
+            G.check_sheet(back, st, name="sheet %d, inside" % (n + 1))
+        sheets.append((evs, frame, pieces, back))
+    key, mat, layers = material_layers(material, frame=any(s[1] for s in sheets))
+    pages, svgs, svg_sheets, info = [], [], [], []
+    for n, (evs, frame, pieces, back) in enumerate(sheets):
+        if back:
+            pages.append(("Sheet %d: inside first, then turn it over" % (n + 1), back))
+            svgs.append(("%02d_%s_inside.svg" % (n + 1, slug(name)), svg(back, st, title + " - inside")))
+            svg_sheets.append(n)
         page = evs + ([frame] if frame else [])
         pages.append(("Sheet %d" % (n + 1), page))
         svgs.append(("%02d_%s.svg" % (n + 1, slug(name)), svg(page, st, title)))
-        info.append({"parts": len(evs), "minutes": G.job_time(page, layers),
+        svg_sheets.append(n)
+        info.append({"parts": len(evs), "minutes": G.job_time(page, layers), "inside": bool(back),
                      "offcut": S.offcut(placements, sizes, sheet, n),
                      "pieces": [{"name": p.name, "w": round(p.size[0], 1), "h": round(p.size[1], 1)} for p in pieces]
                      if frame else [],
@@ -306,6 +336,13 @@ def project_files(name, title, parts, placements, deco, material, sheet, notes_e
                          % (n + 1, s["parts"], "" if s["parts"] == 1 else "s", _time_txt(s["minutes"]), rest(s))
                          for n, s in enumerate(info))
         notes += "Times are rough - LightBurn's Preview has the real number.\n"
+    flips = [n + 1 for n, s in enumerate(info) if s["inside"]]
+    if flips:
+        notes += ("Engraved on both sides: sheet%s %s. For each: 1) lay the sheet into the corner stop (lower left, "
+                  "x 0 / y 0) and run its page \"Sheet N: inside first\"; 2) turn the sheet over left to right (its "
+                  "right edge to the left), back into the same stop; 3) run page \"Sheet N\". A sheet that isn't "
+                  "%g mm wide shifts the inside engraving by the difference: measure it. Make a registration test "
+                  "cut first.\n" % ("s" if len(flips) > 1 else "", ", ".join(map(str, flips)), st[0]))
     if any(s["rest"] for s in info):
         notes += ("The last layer (CUT frame) cuts the rest pieces free once the parts are done. Switch its Output "
                   "off to keep a sheet whole.\n")
@@ -316,7 +353,8 @@ def project_files(name, title, parts, placements, deco, material, sheet, notes_e
     notes += lbrn.common_notes(mat["label"], st)
     lb = lbrn.render_pages(pages, layers, notes, st, material_height=material.get("thickness", mat["thickness"]),
                            keep=keep)
-    return {"lbrn2": ("%s.lbrn2" % slug(name), lb), "svgs": svgs, "sheets": info, "kept": bool(keep)}
+    return {"lbrn2": ("%s.lbrn2" % slug(name), lb), "svgs": svgs, "svg_sheets": svg_sheets, "sheets": info,
+            "kept": bool(keep)}
 
 
 def total_minutes(sheets):
@@ -332,7 +370,8 @@ def files_result(proj):
     """export()/calibration_export() result: the one .lbrn2 project, the SVG sheets and the per-sheet numbers."""
     fname, lb = proj["lbrn2"]
     out = [{"name": fname, "kind": "lbrn2", "content": lb, "minutes": total_minutes(proj["sheets"])}]
-    for (sname, svg), s in zip(proj["svgs"], proj["sheets"]):
+    for (sname, svg), n in zip(proj["svgs"], proj.get("svg_sheets") or range(len(proj["svgs"]))):
+        s = proj["sheets"][n]
         out.append({"name": sname, "kind": "svg", "content": svg, "minutes": s["minutes"], "offcut": s["offcut"]})
     return {"ok": True, "files": out, "kept": proj["kept"],
             "sheets": [{"minutes": s["minutes"], "offcut": round(s["offcut"], 1), "pieces": s["pieces"]}

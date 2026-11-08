@@ -228,6 +228,9 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .reach { stroke: #7a6c52; stroke-width: .4; stroke-dasharray: 3 2; }
 .margin { fill: none; stroke: #b9a682; stroke-width: .3; stroke-dasharray: 1.5 1.5; }
 .offcut { fill: #ffffff; opacity: .16; }
+.part .underside { fill: none; stroke: var(--engrave); stroke-width: .8px; vector-effect: non-scaling-stroke; opacity: .3; stroke-dasharray: 2 2; }
+.board-bar .seg { display: inline-flex; }
+.board-bar .seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); }
 .rest-piece { fill: #ffffff; opacity: .12; }
 .frame-cut { stroke: #d633d6; stroke-width: 1px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
 .rest-label { fill: #7a6c52; font: 600 8px system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }

@@ -17,7 +17,7 @@ A request:
 import json
 import traceback
 
-from evlaser import machine as M
+from evlaser import lbrn, machine as M
 
 from . import assembly, capture, catalog, export as X, faces as F, kerf, sheets as S
 
@@ -91,13 +91,13 @@ def build(req):
     n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
                             info.get("attrs"))
-    parts, deco, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
+    parts, deco, deco_in, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
     warnings += w2
     out_parts = []
     for p in parts:
         j = p.to_json()
-        j["deco"] = [{"layer": layer, "lines": [[[round(x, 3), round(y, 3)] for x, y in ls.coords] for ls in m.geoms]}
-                     for layer, m in deco.get(p.index, [])]
+        j["deco"] = [_deco_json(layer, g) for layer, g in deco.get(p.index, [])] + [
+            dict(_deco_json(layer, g), side="in") for layer, g in deco_in.get(p.index, [])]
         out_parts.append(j)
     return {
         "ok": True, "title": _title(req), "parts": out_parts, "placements": placements, "too_big": too_big,
@@ -108,6 +108,10 @@ def build(req):
     }
 
 
+def _deco_json(layer, g):
+    return {"layer": layer, "lines": [[[round(x, 3), round(y, 3)] for x, y in ls.coords] for ls in lbrn._lines(g)]}
+
+
 def _mark_part(face_info):
     """Where the maker's mark goes unless it was put on a part: the closed box's bottom face (eVlaser: on an
     underside), else None (export.bottom_part decides)."""
@@ -115,17 +119,19 @@ def _mark_part(face_info):
 
 
 def _decorations(req, parts, asm, info, draft=False):
-    """(parts, deco, face info, warnings): the parts with the face editor's holes cut (copies), what's engraved on
+    """(parts, deco, inside deco, face info, warnings): the parts with the face editor's holes cut (copies), what's
+    engraved on the parts' other side (the inside faces) and what's engraved on
     each - labels, the maker's mark (clear of the face editor's items and holes on its part) and the face editor's
     items (req["faces"]) - and the faces for the editor, each with the mark's lines if it's there."""
-    face_deco, face_info, found, holes = F.decorate(parts, asm, req.get("faces"), info["thickness"], req.get("boards"))
+    face_deco, face_info, found, holes, deco_in = F.decorate(parts, asm, req.get("faces"), info["thickness"],
+                                                             req.get("boards"))
     parts = F.with_holes(parts, holes, bool(info.get("comp")), float(info.get("burn") or 0.0))
     deco, warnings = X.decorations(parts, req.get("options") or {}, info["thickness"], req["generator"], draft,
                                    avoid=F.footprints(face_deco), default_part=_mark_part(face_info))
     F.show_fixed(face_info, found, deco)
     for i, items in face_deco.items():
         deco.setdefault(i, []).extend(items)
-    return parts, deco, face_info, warnings
+    return parts, deco, deco_in, face_info, warnings
 
 
 def export(req):
@@ -148,7 +154,7 @@ def export(req):
         return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
     opts = req.get("options") or {}
     asm = assembly.assemble(req["generator"], parts, info["thickness"], layout, float(sheet["w"]), info.get("attrs"))
-    parts, deco, face_info, _w = _decorations(req, parts, asm, info)
+    parts, deco, deco_in, face_info, _w = _decorations(req, parts, asm, info)
     bad = F.problems(face_info)
     if bad:
         return {"ok": False, "error": "Move these first:\n" + "\n".join(bad)}
@@ -167,7 +173,7 @@ def export(req):
         mark_note = "No maker's mark."
     proj = X.project_files(name, _title(req), parts, layout, deco, mat, sheet,
                            notes_extra="Fit: %s. %s" % (fit, mark_note), previous=req.get("previous"),
-                           comp=info["comp"], rest_cuts=opts.get("rest_cuts", True))
+                           comp=info["comp"], rest_cuts=opts.get("rest_cuts", True), inside=deco_in)
     return X.files_result(proj)
 
 

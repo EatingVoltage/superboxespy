@@ -248,7 +248,8 @@ export class SheetView {
         if (p.paths["1"]) pg.append(svgEl("path", { d: pathD(p.paths["1"]), class: "line" }));
         for (const d of p.deco) {
           const dd = d.lines.map((l) => "M" + l.map((q) => q.join(" ")).join("L")).join("");
-          pg.append(svgEl("path", { d: dd, class: d.layer === 1 ? "line" : "ref" }));
+          // the inside faces' engraving is on the underside as cut: faint
+          pg.append(svgEl("path", { d: dd, class: (d as { side?: string }).side === "in" ? "underside" : d.layer === 1 ? "line" : "ref" }));
         }
         pg.append(svgEl("path", { d: pathD(cut), class: "cut" }));
         const title = svgEl("title");

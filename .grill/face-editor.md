@@ -65,11 +65,19 @@ kit; the process is discussed along the way, not settled up front.
   and rounded rectangle; cut through the part on a copy (the parts are cached), in the 3D and on the sheets.
 
 - 2026-11-08, edge connectors: the library's six side connectors as wall openings at a board height per wall.
+- 2026-11-08, inside faces: each face's other side ("top.in"), the outside view mirrored left to right; covered
+  inside by what reaches it from inside (the floor, side walls' ends, the walls under a lid), not by what's far
+  inside (the floor under a lid). Its engraving goes on a page before the sheet's own, mirrored about the sheet's
+  middle, for the sheet turned over left to right against a stop at its lower-left corner (top to bottom would put
+  the parts near the bottom above the 390 mm reach). Not cut yet: the registration test cut comes first.
 - 2026-11-08, thumb notch: a half disc cut into a face's top or bottom edge; the outline's own cut path is cut back
   (kerf as for holes). On the CANVAS shoebox it goes in a wall's top edge, deeper than the lid's rim: the classic
   shoebox grip (the lid's rim isn't a face of its own).
 
 ## Defaults set without asking
+- The flip is left to right against a corner stop at the lower left; the inside page's engraving is mirrored about
+  the nominal sheet width's middle (a sheet off 297 shifts it by the difference, said in the Notes). Holes and
+  notches can't go on an inside face (they go through).
 - A thumb notch needs a plain, straight edge (the half disc's area within 3 %: no finger joints there), the side
   joints' keep-out clear, and its diameter at most the face's height less the keep-out; 30 mm to start.
 - An edge connector's opening: its library notch's width where the notch runs out past the body (the measured fit
@@ -116,6 +124,5 @@ kit; the process is discussed along the way, not settled up front.
   walls.
 
 ## Out of scope (for now)
-- Inside faces and two-sided jobs.
 - Fonts other than eV Sans.
-- Product-box cut-outs (thumb notch, window, hand hold) and wall holes for edge connectors (jacks, USB-C).
+- Product-box cut-out presets beyond the thumb notch (a window or hand hold is a rectangle hole).

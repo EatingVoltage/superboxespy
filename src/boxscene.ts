@@ -135,11 +135,12 @@ export class GeometryCache {
 
 function engraving(part: PartJ, thickness: number): THREE.LineSegments | null {
   const segs: number[] = [];
-  const z = thickness + 0.03;
   for (const d of part.deco) {
     if (d.layer !== 1) continue;
+    const z = (d as { side?: string }).side === "in" ? -0.03 : thickness + 0.03;   // inside: the part's other face
     for (const line of d.lines) for (let i = 1; i < line.length; i++) segs.push(line[i - 1][0], line[i - 1][1], z, line[i][0], line[i][1], z);
   }
+  const z = thickness + 0.03;
   for (const s of part.paths["1"] ?? []) {
     let cur = s.start;
     for (const g of s.segs) {

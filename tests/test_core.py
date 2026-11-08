@@ -341,7 +341,7 @@ class Faces(unittest.TestCase):
 
     def test_faces_of_the_closed_box(self):
         b = api.build(self.req())
-        names = {f: b["parts"][v["part"]]["name"] for f, v in b["faces"].items()}
+        names = {f: b["parts"][v["part"]]["name"] for f, v in b["faces"].items() if not f.endswith(".in")}
         self.assertEqual(set(names), {"top", "bottom", "front", "back", "left", "right"})
         self.assertEqual(names["top"], "lid top")
         self.assertNotIn("lid", names["front"])              # the wall, not the lid's rim
@@ -542,6 +542,52 @@ class Faces(unittest.TestCase):
         req["layout"] = b["placements"]
         self.assertTrue(api.export(req)["ok"])
 
+    def test_inside_faces_are_the_other_side_mirrored(self):
+        """Seen from inside, a face is the outside's view mirrored left to right: the same corner of the view lands
+        across the part. The floor doesn't cover the lid's underside, the walls under it do; holes stay outside."""
+        corner = {"id": "a", "kind": "text", "text": "AB", "size": 8, "anchor": "tl", "dx": 20, "dy": -20}
+        req = self.req()
+        req["faces"] = {"top": [corner], "top.in": [dict(corner, id="b")],
+                        "front.in": [{"id": "h", "kind": "hole", "shape": "round", "d": 6, "anchor": "c"}]}
+        b = api.build(req)
+        self.assertEqual({r for r in b["faces"] if r.endswith(".in")},
+                         {r + ".in" for r in b["faces"] if not r.endswith(".in")})
+        lid = b["parts"][b["faces"]["top"]["part"]]
+        out = next(d for d in lid["deco"] if d.get("side") != "in" and d["layer"] == M.LINE)
+        inn = next(d for d in lid["deco"] if d.get("side") == "in")
+        cx = lambda d: (min(p[0] for ln in d["lines"] for p in ln) + max(p[0] for ln in d["lines"] for p in ln)) / 2
+        self.assertAlmostEqual(cx(out) + cx(inn), lid["w"], delta=0.5)      # mirrored across the part
+        top_in = b["faces"]["top.in"]
+        self.assertFalse(top_in["items"][0]["bad"])
+        self.assertFalse(_inside_rings(top_in["covered"], top_in["w"] / 2, top_in["h"] / 2))  # not the floor
+        self.assertTrue(_inside_rings(top_in["covered"], 2.0, top_in["h"] / 2))        # the walls' tops under it
+        self.assertEqual(top_in["fixed"], [])                               # the mark is on the outside
+        self.assertEqual(b["faces"]["front.in"]["items"][0]["error"], "a hole goes through: put it on the outside")
+
+    def test_an_inside_face_gets_its_own_mirrored_page(self):
+        req = self.req()
+        req["faces"] = {"top.in": [{"id": "t", "kind": "text", "text": "Thank you", "size": 8, "anchor": "c"}]}
+        b = api.build(req)
+        req["layout"] = b["placements"]
+        res = api.export(req)
+        self.assertTrue(res["ok"], res.get("error"))
+        lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
+        pages = re.findall(r'Page0Name="([^"]+)"', lb) + re.findall(r'SubType="Page" Name="([^"]+)"', lb)
+        sheet = next(pl["sheet"] for pl in b["placements"] if pl["part"] == b["faces"]["top"]["part"]) + 1
+        self.assertEqual(pages.count("Sheet %d: inside first, then turn it over" % sheet), 1)
+        self.assertLess(pages.index("Sheet %d: inside first, then turn it over" % sheet), pages.index("Sheet %d" % sheet))
+        self.assertIn("turn the sheet over left to right", lb)
+        # the page's engraving is the placed engraving mirrored about the sheet's middle
+        parts, info = api._render(req)
+        parts, _deco, inside, _fi, _w = api._decorations(req, parts, assembly.assemble("ABox", parts, 3.6,
+                                                                                       req["layout"]), info)
+        pi = b["faces"]["top"]["part"]
+        pl = next(q for q in req["layout"] if q["part"] == pi)
+        placed = X._on_sheet(inside[pi][0][1], parts[pi], pl)
+        page = X.inside_page(parts, [pl], inside, S.A3)[0].items[0][2]
+        self.assertAlmostEqual(placed.bounds[0], 297 - page.bounds[2], places=6)
+        self.assertAlmostEqual(placed.bounds[1], page.bounds[1], places=6)
+
     def test_the_lid_is_engraved_as_seen_from_outside(self):
         req = self.req(items=[{"id": "t", "kind": "text", "text": "CANVAS", "size": 12, "anchor": "c"}])
         b = api.build(req)
@@ -555,6 +601,16 @@ class Faces(unittest.TestCase):
         req["layout"] = b["placements"]
         res = api.export(req)
         self.assertTrue(res["ok"], res.get("error"))
+
+
+def _inside_rings(rings, x, y):
+    """Even-odd: is (x, y) inside the region these rings outline?"""
+    n = 0
+    for r in rings:
+        for (x0, y0), (x1, y1) in zip(r, r[1:] + r[:1]):
+            if (y0 > y) != (y1 > y) and x < (x1 - x0) * (y - y0) / (y1 - y0) + x0:
+                n += 1
+    return n % 2 == 1
 
 
 class Calibration(unittest.TestCase):
