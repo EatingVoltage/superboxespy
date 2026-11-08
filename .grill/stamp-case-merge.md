@@ -78,7 +78,10 @@ and the stamp case in 3D. Not wanted yet: stamp-case boards and box parts on the
   the rule in TypeScript, from the parts' boxes, to follow a drag; a test checks it against Python on every type.
 
 ## Build order
-Steps 1-5 and the conversion (7) done 2026-11-07, with logos through `serve.py`.
+Steps 1-5 and the conversion (7) done 2026-11-07, with logos through `serve.py`. stampcaser retired 2026-11-08
+(Samuel: "retire now", before a stamp case had been cut from superboxes): its last record committed, the repo archived
+on GitHub with its README pointing here, the exe uninstalled with its own uninstall (Start menu, `.stampcase` file
+type, Installed apps entry, program folder). `C:\Projects\stampcaser` stays for the parity tests.
 1. Python core: stampcaser's model, shapes, layout, pack, magnets, labels into `python/superboxes/stampcase/`; the two
    evlaser copies merged (typeset, textures, svgpath come over); fonttools in Pyodide; the converter; the parity test.
 2. The type end to end: catalog entry, api, sheets, LightBurn export, 3D assembly (explode, lid lift, magnets, stamps).

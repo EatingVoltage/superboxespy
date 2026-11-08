@@ -235,8 +235,7 @@ Next, in this order (agreed 2026-11-07, see `.grill/stamp-case-merge.md`):
 1. The CANVAS starter-kit box's lid test cut (`.grill/face-editor.md`), then the face editor's next steps: wall holes
    for edge connectors from the library's case notches, inside faces. The stamp case keeps its own board editor for
    now.
-2. Retire stampcaser once a case has been cut from here.
-3. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
+2. Sheet jobs (several boxes on shared sheets), a grid editor for TrayLayout.
 
 A stamp-case build after an edit met its 300 ms: 0.19 s for 9 stamps, 0.25-0.27 s for 16; Re-pack of 16 took 1.7 s
 (Pyodide under Node, `node scripts/pyodide-smoke.mjs`, 2026-11-07). On 2026-11-08 the same PC read about twice that
