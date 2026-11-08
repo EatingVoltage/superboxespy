@@ -512,6 +512,36 @@ class Faces(unittest.TestCase):
         req["layout"] = api.build(req)["placements"]
         self.assertTrue(api.export(req)["ok"])
 
+    def test_a_thumb_notch_cuts_into_a_plain_edge(self):
+        import math
+        from shapely.geometry import Polygon
+        from evlaser import svgpath
+        notch = {"id": "n", "kind": "hole", "shape": "notch", "d": 40, "anchor": "t", "dx": 0, "dy": 0}
+        req = self.req()
+        req["faces"] = {"front": [notch], "left": [dict(notch, id="m", anchor="b")],
+                        "right": [dict(notch, id="c", anchor="c")]}
+        b = api.build(req)
+        got = {r: b["faces"][r]["items"][0] for r in ("front", "left", "right")}
+        self.assertFalse(got["front"]["bad"])
+        self.assertTrue(got["left"]["bad"])                          # the floor's finger joint along that edge
+        self.assertEqual(got["right"]["error"], "drag it onto the top or bottom edge")
+        fp = b["faces"]["front"]["part"]
+        plain = api.build(self.req())["parts"][fp]
+        self.assertAlmostEqual(plain["area"] - b["parts"][fp]["area"], math.pi * 20 ** 2 / 2, delta=1.0)
+        # boxes.py burns its own paths: the notch's cut path runs the burn inside the finished notch (radius r - burn),
+        # and the outline's own cut path the burn outside the edge, so a strip that wide goes too
+        parts, info = api._render(req)
+        parts = api._decorations(req, parts, assembly.assemble("ABox", parts, 3.6), info)[0]
+        before, _ = api._render(self.req())
+        outer = lambda q: max((Polygon(svgpath.flatten(sp, 6)).buffer(0) for sp in q.subpaths[M.CUT] if sp[2]),
+                              key=lambda g: g.area)
+        lost = outer(before[fp]).area - outer(parts[fp]).area
+        r = 20 - MAT["burn"]
+        self.assertAlmostEqual(lost, math.pi * r ** 2 / 2 + 2 * r * MAT["burn"], delta=0.5)
+        req["faces"] = {"front": [notch]}
+        req["layout"] = b["placements"]
+        self.assertTrue(api.export(req)["ok"])
+
     def test_the_lid_is_engraved_as_seen_from_outside(self):
         req = self.req(items=[{"id": "t", "kind": "text", "text": "CANVAS", "size": 12, "anchor": "c"}])
         b = api.build(req)

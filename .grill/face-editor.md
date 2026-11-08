@@ -65,8 +65,13 @@ kit; the process is discussed along the way, not settled up front.
   and rounded rectangle; cut through the part on a copy (the parts are cached), in the 3D and on the sheets.
 
 - 2026-11-08, edge connectors: the library's six side connectors as wall openings at a board height per wall.
+- 2026-11-08, thumb notch: a half disc cut into a face's top or bottom edge; the outline's own cut path is cut back
+  (kerf as for holes). On the CANVAS shoebox it goes in a wall's top edge, deeper than the lid's rim: the classic
+  shoebox grip (the lid's rim isn't a face of its own).
 
 ## Defaults set without asking
+- A thumb notch needs a plain, straight edge (the half disc's area within 3 %: no finger joints there), the side
+  joints' keep-out clear, and its diameter at most the face's height less the keep-out; 30 mm to start.
 - An edge connector's opening: its library notch's width where the notch runs out past the body (the measured fit
   at the board's edge), from 0.5 below the board's top to 0.5 above the part (the library's own air, DeviceWizard
   D-60), ends fully rounded (the jack comes out a 6.0 circle on its tube's axis).

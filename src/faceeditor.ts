@@ -318,11 +318,19 @@ export class FaceEditor {
   }
 
   /** A hole at the face's centre: `p` a library preset, or a plain round / rectangle. */
-  addHole(p: Partial<HolePreset> & { shape: "round" | "rect" }) {
+  addHole(p: Omit<Partial<HolePreset>, "shape"> & { shape: "round" | "rect" | "notch" }) {
+    if (p.shape === "notch") {                       // a thumb notch: on the top edge to start with
+      this.addItem({ id: newId(), kind: "hole", shape: "notch", d: 30, rot: 0, anchor: "t", dx: 0, dy: 0, size: 0 });
+      return;
+    }
     const item: FaceItem = { id: newId(), kind: "hole", shape: p.shape, rot: 0, anchor: "c", dx: 0, dy: 0, size: 0,
       ...(p.shape === "rect" ? { w: p.w ?? 20, h: p.h ?? 10, r: p.r ?? 1 } : { d: p.d ?? 6 }),
       ...(p.name ? { part: p.name } : {}),
       ...(p.kind === "edge" ? { board: true, lift: p.lift ?? -0.5 } : {}) };
+    this.addItem(item);
+  }
+
+  private addItem(item: FaceItem) {
     const faces = structuredClone(this.host.faces());
     faces[this.tab] = [...(faces[this.tab] ?? []), item];
     this.selected = item.id;
@@ -332,7 +340,8 @@ export class FaceEditor {
   private holeMenu(): HTMLSelectElement {
     const sel = h("select", { "aria-label": "Add a hole", title: "A hole through the wood (CUT), at its finished size: the kerf is taken care of" }) as HTMLSelectElement;
     sel.append(h("option", { value: "", selected: true, disabled: true }, "Add hole…"),
-      h("option", { value: "round" }, "Round, any size"), h("option", { value: "rect" }, "Rectangle, any size"));
+      h("option", { value: "round" }, "Round, any size"), h("option", { value: "rect" }, "Rectangle, any size"),
+      h("option", { value: "notch" }, "Thumb notch, on an edge"));
     const list: HolePreset[] = [];
     holePresets().then((ps) => {
       list.push(...ps);
@@ -347,7 +356,7 @@ export class FaceEditor {
     });
     sel.onchange = () => {
       const v = sel.value;
-      if (v === "round" || v === "rect") this.addHole({ shape: v });
+      if (v === "round" || v === "rect" || v === "notch") this.addHole({ shape: v });
       else if (v.startsWith("p")) this.addHole(list[Number(v.slice(1))]);
     };
     return sel;
@@ -476,7 +485,9 @@ export class FaceEditor {
       kids.push(text, h("span", {}, "cap"), num(it.size, "Cap height, mm", (v) => this.change(it.id, { size: v })),
         h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), styleSel());
     } else if (it.kind === "hole") {
-      kids.push(h("b", { title: "Cut through, at its finished size" }, it.part ?? (it.shape === "rect" ? "Rectangle hole" : "Round hole")));
+      kids.push(h("b", { title: it.shape === "notch" ? "A half-round notch in the edge, to lift a lid: drag it to the " +
+        "top or bottom edge" : "Cut through, at its finished size" },
+        it.part ?? (it.shape === "notch" ? "Thumb notch" : it.shape === "rect" ? "Rectangle hole" : "Round hole")));
       if (it.shape === "rect") {
         kids.push(num(it.w ?? 20, "Width, mm", (v) => this.change(it.id, { w: v }), 0.01, 0.5), h("span", {}, "×"),
           num(it.h ?? 10, "Height, mm", (v) => this.change(it.id, { h: v }), 0.01, 0.5), h("span", { class: "unit" }, "mm, r"),

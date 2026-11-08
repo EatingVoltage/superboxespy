@@ -12,7 +12,8 @@ of the part's outline. Items are mm in that view:
     {"id", "kind": "text" | "logo" | "svg" | "hole", "text", "logo" (a house logo's file name), "svg" (an imported
      SVG's text, svgart.py), "name" (its file name), "size" (cap height, or a logo's or SVG's height, mm),
      "bold", "style": "outline" | "hatch", "rot": 0 | 90 | 180 | 270,
-     a hole: "shape": "round" (with "d") | "rect" (with "w", "h", "r"), "part" (the library part it's for),
+     a hole: "shape": "round" (with "d") | "rect" (with "w", "h", "r") | "notch" (a thumb notch: "d", its centre on
+     the face's top or bottom edge, by the anchor's row), "part" (the library part it's for),
      "anchor": "tl" | "t" | "tr" | "l" | "c" | "r" | "bl" | "b" | "br", "dx", "dy"}
 
 The item's own anchor point (the same spot of its bounding box) sits (dx, dy) from the face's anchor point, so it
@@ -26,6 +27,7 @@ at the board's height on that wall (the request's "boards": {role: mm of the boa
 the maker's mark see it; an engraving across a hole is red.
 """
 import copy
+import math
 
 from dataclasses import dataclass
 
@@ -34,7 +36,7 @@ from shapely import affinity
 from shapely.geometry import MultiLineString, MultiPoint, MultiPolygon, Point, Polygon, box
 from shapely.ops import unary_union
 
-from evlaser import lbrn, machine as M, textures
+from evlaser import lbrn, machine as M, svgpath, textures
 
 from . import svgart
 from .stampcase import config as SC, shapes as SS
@@ -187,7 +189,10 @@ def _svg(item, size, rot):
 
 
 def _hole_dims(item):
-    """("round", r) or ("rect", w, h, r) of a hole as drawn on the face (turned a quarter: w and h swap)."""
+    """("round", r), ("notch", r) or ("rect", w, h, r) of a hole as drawn on the face (turned a quarter: w and h
+    swap)."""
+    if item.get("shape") == "notch":
+        return "notch", max(1.0, float(item.get("d") or 30) / 2)
     if item.get("shape") == "rect":
         w, h = max(0.5, float(item.get("w") or 10)), max(0.5, float(item.get("h") or 5))
         if int(item.get("rot") or 0) % 180:
@@ -197,7 +202,7 @@ def _hole_dims(item):
 
 
 def _hole_poly(dims, cx=0.0, cy=0.0, shrink=0.0):
-    if dims[0] == "round":
+    if dims[0] in ("round", "notch"):
         return Point(cx, cy).buffer(dims[1] - shrink, quad_segs=32)
     _, w, h, r = dims
     w, h, r = w - 2 * shrink, h - 2 * shrink, max(0.0, r - shrink)
@@ -284,6 +289,15 @@ def decorate(parts, asm, faces_req, t, boards=None):
             got = place(item, face)
             if not got:
                 continue
+            if item.get("shape") == "notch":              # its centre on the top or bottom edge, by the anchor's row
+                row = (item.get("anchor") or "c")[0]
+                if row not in "tb":
+                    items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
+                                      "error": "drag it onto the top or bottom edge"})
+                    continue
+                poly, lines, (x0, y0, x1, y1) = got
+                dy = (face.h if row == "t" else 0.0) - (y0 + y1) / 2
+                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy))
             if item.get("board"):                      # an edge connector: at the board, only its x is the item's
                 if face.floor is None or not isinstance(board, (int, float)):
                     items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
@@ -297,14 +311,19 @@ def decorate(parts, asm, faces_req, t, boards=None):
         here = []
         for item, poly, bounds in cut:
             others = [q for it, q, _b in cut if it is not item]
-            bad = (not face.free.contains(poly)
-                   or any(poly.distance(q) < HOLE_WEB - 1e-6 for q in others))
             dims = _hole_dims(item)
+            near = any(poly.distance(q) < HOLE_WEB - 1e-6 for q in others)
+            if dims[0] == "notch":
+                shown = poly.intersection(face.outline)
+                bad = near or not _notch_ok(poly, dims[1], face, t)
+            else:
+                shown = poly
+                bad = near or not face.free.contains(poly)
             centre = face.to_part(Point((bounds[0] + bounds[2]) / 2, (bounds[1] + bounds[3]) / 2))
             holes.setdefault(face.part, []).append((_turned(dims, face), (centre.x, centre.y)))
-            here.append(poly)
-            items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad, "hole": True,
-                              "lines": _round(_outline_lines(poly))})
+            here.append(shown)
+            items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in shown.bounds], "bad": bad,
+                              "hole": True, "lines": _round(_outline_lines(shown))})
         holes_view = unary_union(here).buffer(1.0) if here else None
         for item in (it for it in reqs if it.get("kind") != "hole"):
             try:
@@ -330,6 +349,36 @@ def decorate(parts, asm, faces_req, t, boards=None):
     return deco, info, faces, holes
 
 
+def _notch_ok(disc, r, face, t):
+    """A thumb notch cuts a half disc out of a plain, straight edge (no finger joints there), clear of the joints at
+    its sides and leaving the wood's keep-out at the far edge."""
+    half = disc.intersection(face.outline).area
+    x0, _y0, x1, _y1 = face.free.bounds if not face.free.is_empty else (0, 0, 0, 0)
+    dx0, _dy0, dx1, _dy1 = disc.bounds
+    return (abs(half - math.pi * r * r / 2) < 0.03 * math.pi * r * r / 2 and dx0 >= x0 - 1e-6 and dx1 <= x1 + 1e-6
+            and 2 * r <= face.h - (t + KEEP_OUT))
+
+
+def _notched(subs, cut):
+    """The cut paths with the closed one `cut` crosses (the outline) cut back by it, as a polyline; None when no closed
+    path crosses it."""
+    out = list(subs)
+    for k, sp in enumerate(subs):
+        if not sp[2]:
+            continue
+        ring = svgpath.flatten(sp, 6)
+        if len(ring) < 4:
+            continue
+        poly = Polygon(ring).buffer(0)
+        if poly.intersects(cut) and not poly.contains(cut):
+            left = poly.difference(cut)
+            left = max(left.geoms, key=lambda g: g.area) if hasattr(left, "geoms") else left
+            pts = [tuple(c) for c in left.exterior.coords]
+            out[k] = (pts[0], [(None, None, c) for c in pts[1:]], True)
+            return out
+    return None
+
+
 def _turned(dims, face):
     """A hole's dimensions in part coordinates: the face's view is the part turned by quarters, so w and h swap
     when it's turned a quarter."""
@@ -351,7 +400,13 @@ def with_holes(parts, holes, per_axis, burn):
         p.subpaths = {k: list(v) for k, v in p.subpaths.items()}
         cut = []
         for dims, (cx, cy) in hs:
-            p.subpaths[M.CUT].append(_hole_sub(dims, cx, cy, shrink))
+            if dims[0] == "notch":                     # the outline itself is cut back, not a hole added
+                notched = _notched(p.subpaths[M.CUT], _hole_poly(dims, cx, cy, shrink))
+                if notched is None:
+                    continue
+                p.subpaths[M.CUT] = notched
+            else:
+                p.subpaths[M.CUT].append(_hole_sub(dims, cx, cy, shrink))
             cut.append(_hole_poly(dims, cx, cy))
         region = unary_union(cut)
         p.shape = p.shape.difference(region)

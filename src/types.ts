@@ -51,7 +51,8 @@ export interface FaceItem {
   logo?: string;               // a house logo's file name
   svg?: string;                // an imported SVG's text (it travels in the box file)
   name?: string;               // the imported file's name
-  shape?: "round" | "rect";    // a hole: round (d) or a rectangle (w, h, corner radius r), mm, the finished size
+  shape?: "round" | "rect" | "notch";   // a hole: round (d), a rectangle (w, h, corner radius r), or a thumb notch
+                                        // (d, its centre on the top or bottom edge), mm, the finished size
   d?: number;
   w?: number;
   h?: number;
