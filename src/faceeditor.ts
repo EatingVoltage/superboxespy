@@ -15,7 +15,7 @@
 
 import { h } from "./params";
 import { call } from "./py";
-import { btn, fillToolbar, helpButton, helpCard, menuButton, seg, type MenuItem } from "./ui";
+import { btn, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -753,23 +753,18 @@ export class FaceEditor {
     const got = f.items.find((i) => i.id === it.id);
     const state = got?.error ? h("span", { class: "bad-text" }, it.kind === "hole" ? got.error : `can't be read: ${got.error}`)
       : got?.bad ? h("span", { class: "bad-text" }, "runs into an edge, a finger joint or what covers it") : "";
-    const styleSel = () => {
-      const style = h("select", { "aria-label": "Engraving" }) as HTMLSelectElement;
-      for (const [v, label] of [["outline", "Outline"], ["hatch", "Hatched"]]) {
-        style.append(h("option", { value: v, selected: (it.style ?? "outline") === v }, label));
-      }
-      style.onchange = () => this.change(it.id, { style: style.value as FaceItem["style"] });
-      return style;
-    };
+    // pick one of two: a segmented control, like Outside | Inside
+    const styleSeg = () => seg<"outline" | "hatch">("Engraving", [["outline", "Outline", "Engraved as outlines (LINE)"],
+      ["hatch", "Hatched", "Filled with a drawn hatch (LINE)"]], it.style === "hatch" ? "hatch" : "outline",
+      (v) => this.change(it.id, { style: v }));
     if (it.kind === "text") {
       const text = h("textarea", { rows: 1, class: "face-text", spellcheck: "false", "aria-label": "Text" }) as HTMLTextAreaElement;
       text.value = it.text ?? "";
       text.rows = Math.min(4, Math.max(1, text.value.split("\n").length));
       text.onchange = () => this.change(it.id, { text: text.value });
-      const bold = h("input", { type: "checkbox", checked: !!it.bold }) as HTMLInputElement;
-      bold.onchange = () => this.change(it.id, { bold: bold.checked });
       kids.push(text, h("span", {}, "cap"), num(it.size, "Cap height, mm", (v) => this.change(it.id, { size: v })),
-        h("span", { class: "unit" }, "mm"), h("label", { class: "check" }, bold, "Bold"), styleSel());
+        h("span", { class: "unit" }, "mm"),
+        toggle("Bold", "eV Sans Bold", !!it.bold, (on) => this.change(it.id, { bold: on })), styleSeg());
     } else if (it.kind === "hole") {
       kids.push(h("b", { title: it.shape === "notch" ? "A half-round notch in the edge, to lift a lid: drag it to the " +
         "top or bottom edge. Under a lid's rim (grey) make it deeper than the rim, so a finger reaches the rim's edge"
@@ -803,7 +798,7 @@ export class FaceEditor {
     } else if (it.kind === "svg") {
       kids.push(h("b", { title: "An imported SVG, kept in the box" }, it.name ?? "SVG"), h("span", {}, "height"),
         num(it.size, "Height, mm", (v) => this.change(it.id, { size: v })), h("span", { class: "unit" }, "mm"),
-        styleSel());
+        styleSeg());
     } else {
       if (library === null) readLibrary().then(() => this.renderBar());     // to know whether it has filled shapes
       const entry = library?.find((l) => l.logo === it.logo);
@@ -813,12 +808,10 @@ export class FaceEditor {
         h("span", {}, "height"), num(it.size, "Logo height, mm", (v) => this.change(it.id, { size: v })),
         h("span", { class: "unit" }, "mm"));
       if (entry?.fills) {
-        const style = h("select", { "aria-label": "Engraving", title: "As drawn: the file's Scan layers filled (FILL up to " +
-          `${FILL_MAX} mm high, hatched on LINE above), its Cut and Line layers as outlines` }) as HTMLSelectElement;
-        style.append(h("option", { value: "", selected: it.style !== "outline" }, "As drawn"),
-          h("option", { value: "outline", selected: it.style === "outline" }, "Outline only"));
-        style.onchange = () => this.change(it.id, { style: (style.value || undefined) as FaceItem["style"] });
-        kids.push(style);
+        kids.push(seg<"drawn" | "outline">("Engraving", [["drawn", "As drawn", "The file's Scan layers filled (FILL up to " +
+          `${FILL_MAX} mm high, hatched on LINE above), its Cut and Line layers as outlines`],
+        ["outline", "Outline only", "Every shape as an outline (LINE)"]], it.style === "outline" ? "outline" : "drawn",
+        (v) => this.change(it.id, { style: v === "outline" ? "outline" : undefined })));
         if (it.style !== "outline") {
           kids.push(h("span", { class: "hint" }, it.size <= FILL_MAX ? `filled (FILL, ${FILL_MAX} mm high or less)`
             : `hatched (above ${FILL_MAX} mm)`));
