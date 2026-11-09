@@ -93,9 +93,9 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
 - **Text, logos and SVG on the faces** (the face editor: `.grill/face-editor.md`). Beside **Sheets** there's a tab
   per face of the closed box (Top, Front, Back, Left, Right, Bottom), each seen from outside: a wall with the box's
   up on top, the top with the front toward you, the bottom tipped toward you. **Add text** (eV Sans, Regular or Bold,
-  outline or hatched, several lines), **Add logo** (the eV logos through `serve.py`) or **Import SVG** (line art: its
+  outline or hatched, several lines), **Add logo** (the logo library, below) or **Import SVG** (line art: its
   paths and shapes; convert text to paths first; its own size if the file says it in mm; the file is kept in the box),
-  then drag it. Where you drop an item it pins to the nearest corner, edge middle or the centre and keeps its distance
+  then drag it; drag a selected item's corner to size it (proportions kept, 0.5 mm steps). Where you drop an item it pins to the nearest corner, edge middle or the centre and keeps its distance
   from it, so a centred title stays centred and a corner logo stays in its corner when the box changes size; text
   lines align to that side. The dashed line keeps the thickness + 1.5 mm off the edges and finger joints, and off
   what covers a face on the closed box (grey: an over-the-top lid's rim over the walls): an item across it turns red
@@ -103,6 +103,15 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   The items engrave on LINE on the side that faces out, and show on the 3D and the sheets. A face the box only has
   as a part that would need cutting mirrored (Console's and Console2's right sides, Console2's back wall) isn't
   offered.
+- **The logo library** (`.grill/logo-library.md`): **Add logo** opens every logo in
+  `C:\Projects\eating voltage Fonts\logos`, through `serve.py` (private: they never ship with the app). Drag one onto
+  the face (it lands where you drop it, 20 mm high) or click it; **Change…** puts another in place of the selected one.
+  A logo is an `.svg` (its strokes) or a LightBurn `.lbrn2`, one logo per file, its first page as LightBurn draws it:
+  Cut and Line layers engrave as outlines (never cut through), Scan layers stay filled, on FILL while the logo is
+  20 mm high or less and as outlines with a drawn hatch on LINE above that (or **Outline only**). Text needs no font:
+  LightBurn keeps its outline in the file. Bitmaps are left out. A box links its logo by name: change the file and
+  every box using it follows (the library reads the folder again each time it opens); a file that's gone turns the
+  item red.
 - **Holes for device panels**: **Add hole…** on a face gives a round or rounded-rectangle hole of any size, or the
   panel hole of a part from your parts library (`%USERPROFILE%\eatingVoltageLibrary`, DeviceWizard's: every part with
   a confirmed front-plate hole or window, read by `serve.py`, never in this repo): RK09 pots, toggles, buttons, rotary

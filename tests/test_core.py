@@ -603,6 +603,120 @@ class Faces(unittest.TestCase):
         self.assertTrue(res["ok"], res.get("error"))
 
 
+# A LightBurn file the way LightBurn 2 writes one, every case lbrnart.py reads: a 20 x 10 filled frame with a 10 x 4
+# window (two rings, filled even-odd); a path on a layer that's off, whose lists a path in a group 30 mm to the right
+# reuses (VertID / PrimID); text in that group, drawn from its BackupPath; a filled path with a tail into its loop; a
+# bitmap; and a second page.
+LBRN = """<?xml version="1.0" encoding="UTF-8"?>
+<LightBurnProject AppVersion="2.1.04" FormatVersion="1" MaterialHeight="4">
+    <CutSetting type="Scan"><index Value="0"/><name Value="C00"/></CutSetting>
+    <CutSetting type="Cut"><index Value="1"/><name Value="C01"/></CutSetting>
+    <CutSetting type="Cut"><index Value="2"/><name Value="C02"/><doOutput Value="0"/></CutSetting>
+    <Shape Type="Rect" CutIndex="0" W="20" H="10" Cr="0"><XForm>1 0 0 1 10 5</XForm></Shape>
+    <Shape Type="Path" CutIndex="0" VertID="1" PrimID="1"><XForm>1 0 0 1 0 0</XForm>
+        <VertList>V5 3c0x1c1x1V15 3c0x1c1x1V15 7c0x1c1x1V5 7c0x1c1x1</VertList><PrimList>LineClosed</PrimList></Shape>
+    <Shape Type="Path" CutIndex="2" VertID="2" PrimID="2"><XForm>1 0 0 1 0 0</XForm>
+        <VertList>V0 0c0x1c1x1V4 0c0x1c1x1</VertList><PrimList>L0 1</PrimList></Shape>
+    <Shape Type="Group"><XForm>1 0 0 1 30 0</XForm><Children>
+        <Shape Type="Path" CutIndex="1" VertID="2" PrimID="2"><XForm>1 0 0 1 0 2</XForm></Shape>
+        <Shape Type="Text" CutIndex="1" Font="Adam,-1,4096,5,400,0,0,0,0,0" Str="X" H="4" HasBackupPath="1">
+            <XForm>1 0 0 1 0 5</XForm>
+            <BackupPath Type="Path" CutIndex="1"><XForm>1 0 0 1 30 5</XForm>
+                <VertList>V0 0c0x1c1x1V4 0c0x1c1x1V4 4c0x1c1x1V0 4c0x1c1x1</VertList><PrimList>LineClosed</PrimList>
+            </BackupPath>
+        </Shape>
+    </Children></Shape>
+    <Shape Type="Path" CutIndex="0" VertID="3" PrimID="3"><XForm>1 0 0 1 0 0</XForm>
+        <VertList>V0 -10c0x1c1x1V2 -10c0x1c1x1V6 -10c0x1c1x1V4 -6c0x1c1x1</VertList>
+        <PrimList>L0 1L1 2L2 3L3 1</PrimList></Shape>
+    <Shape Type="Bitmap" CutIndex="3" W="5" H="5" Data=""><XForm>1 0 0 1 0 0</XForm></Shape>
+    <Shape Type="Group" SubType="Page" Name="Page 2"><XForm>1 0 0 1 0 0</XForm><Children>
+        <Shape Type="Rect" CutIndex="1" W="500" H="500" Cr="0"><XForm>1 0 0 1 0 0</XForm></Shape>
+    </Children></Shape>
+</LightBurnProject>
+"""
+
+
+class LogoLibrary(unittest.TestCase):
+    """The face editor's logo library (.grill/logo-library.md): LightBurn files in the logos folder, as drawn."""
+
+    def setUp(self):
+        from superboxes.stampcase import config as SC
+        self.SC, self.dirs = SC, SC.LOGO_DIRS
+        self.tmp = tempfile.TemporaryDirectory()
+        with open(os.path.join(self.tmp.name, "mark.lbrn2"), "w", encoding="utf-8") as f:
+            f.write(LBRN)
+        with open(os.path.join(self.tmp.name, "line.svg"), "w", encoding="utf-8") as f:
+            f.write('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 10"><path d="M0 0L30 10"/></svg>')
+        SC.LOGO_DIRS = (self.tmp.name,)
+
+    def tearDown(self):
+        self.SC.LOGO_DIRS = self.dirs
+        self.tmp.cleanup()
+
+    def test_a_lightburn_file_reads_as_lightburn_draws_it(self):
+        from superboxes import lbrnart
+        art = lbrnart.parse(LBRN)
+        self.assertAlmostEqual(art.fill.area, 200 - 40 + 8, places=6)      # frame less its window, the tail's loop
+        self.assertEqual(sorted((round(g.length, 3) for g in art.lines.geoms)), [4.0, 16.0])  # the line, the text
+        self.assertEqual([round(v, 6) for v in art.bounds], [0, -10, 34, 10])  # the group moved, page 2 left out
+        self.assertEqual(art.skipped, 1)                                    # the bitmap
+        x0, y0, x1, y1 = max(art.lines.geoms, key=lambda g: g.length).bounds
+        self.assertEqual((x0, y0, x1, y1), (30, 5, 34, 9))                  # the text where the group put it
+
+    def logo(self, **over):
+        item = {"id": "L", "kind": "logo", "logo": "mark.lbrn2", "size": 20, "anchor": "c", "dx": 0, "dy": 0}
+        item.update(over)
+        b = api.build(Faces.req(self, items=[item]))
+        top = b["faces"]["top"]
+        return b, top["items"][0], b["parts"][top["part"]]["deco"]
+
+    def test_a_small_logo_fills_a_big_one_is_hatched(self):
+        b, it, deco = self.logo(size=20)
+        self.assertFalse(it["bad"])
+        fills = [d for d in deco if d["layer"] == M.FILL]
+        self.assertEqual(len(fills), 1)
+        polys = [shapely.Polygon(p[0], p[1:]) for p in fills[0]["polys"]]
+        self.assertAlmostEqual(sum(p.area for p in polys), 168, places=3)  # drawn 20 high: the file's own size
+        self.assertTrue(it["fill"])
+        lines20 = sum(len(d["lines"]) for d in deco if d["layer"] == M.LINE)
+        _b, it, deco = self.logo(size=30)
+        self.assertFalse([d for d in deco if d["layer"] == M.FILL])
+        self.assertEqual(it["fill"], [])
+        hatched = sum(len(d["lines"]) for d in deco if d["layer"] == M.LINE)
+        _b, _it, deco = self.logo(size=30, style="outline")
+        self.assertFalse([d for d in deco if d["layer"] == M.FILL])
+        outlined = sum(len(d["lines"]) for d in deco if d["layer"] == M.LINE)
+        self.assertGreater(hatched, outlined)
+        self.assertGreater(outlined, lines20)                               # the areas' outlines join the strokes
+
+    def test_the_fill_goes_to_lightburn_on_fill(self):
+        b, _it, _deco = self.logo(size=15)
+        req = Faces.req(self, items=[{"id": "L", "kind": "logo", "logo": "mark.lbrn2", "size": 15, "anchor": "c"}])
+        req["layout"] = b["placements"]
+        res = api.export(req)
+        self.assertTrue(res["ok"], res.get("error"))
+        lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
+        self.assertIn('<Shape Type="Path" CutIndex="%d"' % M.FILL, lb)
+
+    def test_a_logo_that_is_gone_is_red(self):
+        _b, it, _deco = self.logo(logo="gone.lbrn2")
+        self.assertTrue(it["bad"])
+        self.assertEqual(it["error"], "gone.lbrn2 isn't in the logos folder")
+
+    def test_the_library_lists_both_kinds_the_stamp_case_svgs_only(self):
+        from superboxes import faces as F
+        from superboxes.stampcase import shapes as SS
+        lib = {e["logo"]: e for e in F.library()}
+        self.assertEqual(set(lib), {"line.svg", "mark.lbrn2"})
+        m = lib["mark.lbrn2"]
+        self.assertEqual((m["w"], m["h"], m["fills"], m["label"]), (34, 20, True, "mark"))
+        self.assertTrue(m["lines"].startswith("M") and m["fill"].endswith("Z"))
+        self.assertFalse(lib["line.svg"]["fills"])
+        self.assertEqual(SS.logo_files(), ["line.svg"])
+        self.assertEqual(json.loads(api.call("logo_library", "{}"))["logos"][1]["logo"], "mark.lbrn2")
+
+
 def _inside_rings(rings, x, y):
     """Even-odd: is (x, y) inside the region these rings outline?"""
     n = 0

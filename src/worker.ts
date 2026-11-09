@@ -7,7 +7,8 @@ type PyodideAPI = {
   loadPackage(names: string[], opts?: { messageCallback?: (m: string) => void }): Promise<void>;
   unpackArchive(buf: ArrayBuffer, format: string, opts?: { extractDir?: string }): void;
   runPython(code: string): unknown;
-  FS: { mkdirTree(path: string): void; writeFile(path: string, data: Uint8Array): void };
+  FS: { mkdirTree(path: string): void; writeFile(path: string, data: Uint8Array): void; readdir(path: string): string[];
+        unlink(path: string): void };
   globals: { set(name: string, value: unknown): void };
 };
 
@@ -35,16 +36,21 @@ async function start(): Promise<PyodideAPI> {
   return py;
 }
 
-/** The house logos for the stamp case: serve.py hands them over from Samuel's logos folder (they're private and never
- *  ship with the app). Under `npm run dev`, or without the folder, there are none and a case simply has no logo. */
+/** The house logos, .svg and LightBurn .lbrn2, for the face editor's library and the stamp case: serve.py hands them
+ *  over from Samuel's logos folder (they're private and never ship with the app). Under `npm run dev`, or without
+ *  the folder, there are none and a case simply has no logo. Copied again each time the library opens
+ *  (.grill/logo-library.md: a box links its logo by name, so a changed file shows without a restart). */
 async function copyLogos(py: PyodideAPI, base: URL) {
   try {
-    const res = await fetch(new URL("api/logos", base).href);
+    const res = await fetch(new URL("api/logos", base).href, { cache: "no-store" });
     if (!res.ok) return;
     const names: string[] = await res.json();
     py.FS.mkdirTree("/logos");
+    for (const old of py.FS.readdir("/logos")) {
+      if (old !== "." && old !== ".." && !names.includes(old)) py.FS.unlink("/logos/" + old);
+    }
     await Promise.all(names.map(async (n) => {
-      const r = await fetch(new URL("api/logos/" + encodeURIComponent(n), base).href);
+      const r = await fetch(new URL("api/logos/" + encodeURIComponent(n), base).href, { cache: "no-store" });
       if (r.ok) py.FS.writeFile("/logos/" + n, new Uint8Array(await r.arrayBuffer()));
     }));
   } catch {
@@ -62,6 +68,7 @@ self.onmessage = async (ev: MessageEvent<{ id: number; fn: string; req: unknown;
   const { id, fn, req } = ev.data;
   try {
     const py = await ready;
+    if (fn === "logo_library") await copyLogos(py, new URL(await baseURL));
     py.globals.set("_fn", fn);
     py.globals.set("_req", JSON.stringify(req ?? {}));
     const result = py.runPython("api.call(_fn, _req)") as string;

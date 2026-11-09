@@ -109,7 +109,14 @@ def build(req):
 
 
 def _deco_json(layer, g):
-    return {"layer": layer, "lines": [[[round(x, 3), round(y, 3)] for x, y in ls.coords] for ls in lbrn._lines(g)]}
+    """A decoration for the page: its lines; polygons (a logo's fill) as their rings, and as "polys" [[outer ring,
+    hole, ...], ...] for the 3D to fill."""
+    r = lambda cs: [[round(x, 3), round(y, 3)] for x, y in cs]
+    polys = lbrn._polys(g)
+    if polys:
+        return {"layer": layer, "lines": [r(ring.coords) for q in polys for ring in [q.exterior, *q.interiors]],
+                "polys": [[r(q.exterior.coords)] + [r(h.coords) for h in q.interiors] for q in polys]}
+    return {"layer": layer, "lines": [r(ls.coords) for ls in lbrn._lines(g)]}
 
 
 def _mark_part(face_info):
@@ -206,6 +213,8 @@ def call(fn, req_json):
             res = export(req)
         elif fn == "clash":
             res = clash(req)
+        elif fn == "logo_library":
+            res = {"ok": True, "logos": F.library()}
         elif fn == "stampcase_op":
             from .stampcase import api as sc
             res = sc.op(req)

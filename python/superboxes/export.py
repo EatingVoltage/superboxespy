@@ -143,9 +143,14 @@ def ev_part(p, deco, closed_cuts=True):
         e.add(M.LINE, "bez", p.subpaths[M.LINE])
     if p.subpaths[M.REF]:
         e.add(M.REF, "bez", p.subpaths[M.REF])
-    for layer, lines in deco:
-        e.add(layer, "lines", lines)
+    for layer, g in deco:
+        e.add(layer, _kind(g), g)
     return e
+
+
+def _kind(g):
+    """evlaser's item kind of a decoration: "poly" for polygons (a logo's fill: LightBurn fills them), else "lines"."""
+    return "poly" if lbrn._polys(g) else "lines"
 
 
 def placed(e, p, pl):
@@ -268,12 +273,12 @@ def inside_page(parts, on_sheet, inside, sheet):
     out = []
     for pl in on_sheet:
         p = parts[pl["part"]]
-        lines = [g for _layer, g in inside.get(pl["part"], []) if not g.is_empty]
-        if not lines:
+        got = [(layer, g) for layer, g in inside.get(pl["part"], []) if not g.is_empty]
+        if not got:
             continue
         e = G.Part(p.name + " (inside)")
-        for g in lines:
-            e.add(M.LINE, "lines", affinity.scale(_on_sheet(g, p, pl), -1, 1, origin=(sw / 2, 0)))
+        for layer, g in got:
+            e.add(layer, _kind(g), affinity.scale(_on_sheet(g, p, pl), -1, 1, origin=(sw / 2, 0)))
         out.append(e)
     return out
 

@@ -133,11 +133,31 @@ export class GeometryCache {
   }
 }
 
+const ENGRAVE_FILL = new THREE.MeshBasicMaterial({ color: 0x4a2c12, side: THREE.DoubleSide, polygonOffset: true,
+  polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+
+/** A logo's filled areas (FILL), as a burnt patch on the face they're engraved on. */
+function engravedFill(part: PartJ, thickness: number): THREE.Mesh[] {
+  const out: THREE.Mesh[] = [];
+  for (const d of part.deco) {
+    if (!d.polys?.length) continue;
+    const shapes = d.polys.map(([outer, ...holes]) => {
+      const s = new THREE.Shape(outer.map(([x, y]) => new THREE.Vector2(x, y)));
+      s.holes = holes.map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
+      return s;
+    });
+    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shapes), ENGRAVE_FILL);
+    mesh.position.z = d.side === "in" ? -0.02 : thickness + 0.02;
+    out.push(mesh);
+  }
+  return out;
+}
+
 function engraving(part: PartJ, thickness: number): THREE.LineSegments | null {
   const segs: number[] = [];
   for (const d of part.deco) {
-    if (d.layer !== 1) continue;
-    const z = (d as { side?: string }).side === "in" ? -0.03 : thickness + 0.03;   // inside: the part's other face
+    if (d.layer !== 1 && !d.polys) continue;     // LINE, and FILL's outlines
+    const z = d.side === "in" ? -0.03 : thickness + 0.03;   // inside: the part's other face
     for (const line of d.lines) for (let i = 1; i < line.length; i++) segs.push(line[i - 1][0], line[i - 1][1], z, line[i][0], line[i][1], z);
   }
   const z = thickness + 0.03;
@@ -179,6 +199,7 @@ export function buildBoxScene(b: Build, thickness: number,
     if (withExtras) {
       const eng = engraving(part, thickness);
       if (eng) group.add(eng);
+      for (const m of engravedFill(part, thickness)) group.add(m);
     }
     root.add(group);
     items.push({ group, mesh, base: matrix4(place.m), place, part });

@@ -416,15 +416,16 @@ class Endpoint(unittest.TestCase):
         import tempfile
         real = serve.LOGO_DIR
         with tempfile.TemporaryDirectory() as d:
-            for name in ("a.svg", "b c.svg", "notes.txt"):
+            for name in ("a.svg", "b c.svg", "canvas.lbrn2", "notes.txt"):
                 with open(os.path.join(d, name), "w", encoding="utf-8") as f:
                     f.write("<svg/>")
             serve.LOGO_DIR = d
             try:
                 status, body = self.get(serve.LOGOS)
-                self.assertEqual((status, json.loads(body)), (200, ["a.svg", "b c.svg"]))
+                self.assertEqual((status, json.loads(body)), (200, ["a.svg", "b c.svg", "canvas.lbrn2"]))
                 self.assertEqual(self.get(serve.LOGOS + "/b%20c.svg"), (200, b"<svg/>"))
-                self.assertEqual(self.get(serve.LOGOS + "/notes.txt")[0], 404)          # only .svg
+                self.assertEqual(self.get(serve.LOGOS + "/canvas.lbrn2")[0], 200)       # LightBurn logos too
+                self.assertEqual(self.get(serve.LOGOS + "/notes.txt")[0], 404)          # only .svg and .lbrn2
                 self.assertEqual(self.get(serve.LOGOS + "/..%2Fserve.py")[0], 404)       # no paths
                 self.assertEqual(self.get(serve.LOGOS, host="evil.example:%d" % self.port)[0], 403)
             finally:

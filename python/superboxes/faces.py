@@ -9,9 +9,10 @@ The editor works in the face's view: seen from outside, x to the right, y up, wh
 its back for the top and its front for the bottom (tip the box toward you to read it); (0, 0) is the lower-left corner
 of the part's outline. Items are mm in that view:
 
-    {"id", "kind": "text" | "logo" | "svg" | "hole", "text", "logo" (a house logo's file name), "svg" (an imported
-     SVG's text, svgart.py), "name" (its file name), "size" (cap height, or a logo's or SVG's height, mm),
-     "bold", "style": "outline" | "hatch", "rot": 0 | 90 | 180 | 270,
+    {"id", "kind": "text" | "logo" | "svg" | "hole", "text", "logo" (a file in the logos folder: .svg strokes, or a
+     LightBurn .lbrn2, lbrnart.py), "svg" (an imported SVG's text, svgart.py), "name" (its file name), "size" (cap
+     height, or a logo's or SVG's height, mm), "bold", "style": "outline" | "hatch" (a .lbrn2 logo: "outline" for
+     outlines only, else as drawn), "rot": 0 | 90 | 180 | 270,
      a hole: "shape": "round" (with "d") | "rect" (with "w", "h", "r") | "notch" (a thumb notch: "d", its centre on
      the face's top or bottom edge, by the anchor's row), "part" (the library part it's for),
      "anchor": "tl" | "t" | "tr" | "l" | "c" | "r" | "bl" | "b" | "br", "dx", "dy"}
@@ -26,6 +27,11 @@ face down on the laser) and come out as "inside" decorations, which the export p
 for the sheet turned over left to right. What lies inside a face (the floor, the side walls' ends, a partition) is
 kept clear there, as a lid's rim is outside. Holes and notches go through anyway: they belong to the outside.
 
+A logo links to its file by name (.grill/logo-library.md): change the file and every box using it follows; a file
+that's gone turns the item red. A .lbrn2 logo engraves as drawn: its line layers as outlines on LINE, its filled
+shapes on FILL while the logo is FILL_MAX high or less, above that their outlines and a drawn hatch on LINE
+(eVlaser: line first, fill for small accents).
+
 A hole is cut through the part (CUT): its size is the finished hole, the kerf taken care of like boxes.py's own holes,
 and it keeps HOLE_WEB of wood to the next hole. A hole with "board" is an edge connector's opening in a wall: it sits
 at the board's height on that wall (the request's "boards": {role: mm of the board's top above the inside floor}),
@@ -34,6 +40,7 @@ the maker's mark see it; an engraving across a hole is red.
 """
 import copy
 import math
+import os
 
 from dataclasses import dataclass
 
@@ -44,7 +51,7 @@ from shapely.ops import unary_union
 
 from evlaser import lbrn, machine as M, svgpath, textures
 
-from . import svgart
+from . import lbrnart, svgart
 from .stampcase import config as SC, shapes as SS
 
 X, Y, Z = np.eye(3)
@@ -58,6 +65,8 @@ KEEP_OUT = 1.5                   # mm beyond the thickness kept clear along ever
 HOLE_WEB = 2.0                   # mm of wood at least between two holes
 EDGE_AIR = 0.5                   # an edge connector's opening starts this far below the board's top (serve.EDGE_AIR)
 ARC = 0.5522847498               # cubic Bezier handle for a quarter circle
+FILL_MAX = 20.0                  # mm: a logo this high or less engraves its filled shapes on FILL, a taller one hatched
+LOGO_KINDS = (".svg", ".lbrn2")
 
 
 @dataclass
@@ -162,18 +171,18 @@ def _covered(face, m, parts, asm, t, right, up):
 
 # ------------------------------------------------------------------ items
 def _block(item):
-    """(polygons, lines) of an item at its own origin, before it's anchored: text outlines (with their hatch lines
-    for "hatch"), or a logo's strokes."""
+    """(polygons, lines, fill) of an item at its own origin, before it's anchored: text outlines (with their hatch
+    lines for "hatch"), a logo's strokes and areas, an imported SVG's lines. Polygons are engraved as outlines on
+    LINE, fill on FILL."""
     size = max(0.5, float(item.get("size") or 8.0))
     rot = int(item.get("rot") or 0) % 360
     if item.get("kind") == "logo":
-        lines = SS.logo(item.get("logo") or "", 0, 0, size, rot=rot)
-        return MultiPolygon(), lines
+        return _logo(item, size, rot)
     if item.get("kind") == "svg":
-        return MultiPolygon(), _svg(item, size, rot)
+        return MultiPolygon(), _svg(item, size, rot), MultiPolygon()
     rows = [r for r in str(item.get("text") or "").split("\n")]
     if not any(r.strip() for r in rows):
-        return MultiPolygon(), MultiLineString()
+        return MultiPolygon(), MultiLineString(), MultiPolygon()
     font = SS.font(SC.FONT_BOLD if item.get("bold") else SC.FONT_REGULAR)
     col = (item.get("anchor") or "c")[-1]
     align = {"l": "left", "r": "right"}.get(col, "center")
@@ -183,7 +192,38 @@ def _block(item):
     if rot:
         g = affinity.rotate(g, rot, origin=(0, 0))
     hatch = textures.line_hatch(g, HATCH, angles=(45, -45)) if item.get("style") == "hatch" else MultiLineString()
-    return g, hatch
+    return g, hatch, MultiPolygon()
+
+
+def _logo(item, size, rot):
+    """A logo from the logos folder, `size` tall and centred on the origin, as (polygons, lines, fill): an SVG's
+    strokes; a LightBurn file's strokes, and its filled shapes as fill up to FILL_MAX, above it as polygons with a
+    hatch (or as polygons alone for "outline"). Raises ValueError when the file is gone or draws nothing."""
+    name = item.get("logo") or ""
+    path = SS.logo_path(name) if name.lower().endswith(LOGO_KINDS) else None
+    if not path:
+        raise ValueError("%s isn't in the logos folder" % (name or "the logo"))
+    if name.lower().endswith(".svg"):
+        lines = SS.logo(name, 0, 0, size, rot=rot)
+        if lines.is_empty:
+            raise ValueError("%s draws nothing" % name)
+        return MultiPolygon(), lines, MultiPolygon()
+    art = lbrnart.load(path)
+    if art.empty:
+        raise ValueError("%s has nothing to engrave (bitmaps aren't)" % name)
+    x0, y0, x1, y1 = art.bounds
+    k = size / (y1 - y0) if y1 > y0 else size / max(x1 - x0, 1e-9)
+    fit = [k, 0, 0, k, -(x0 + x1) / 2 * k, -(y0 + y1) / 2 * k]
+    lines, fill = affinity.affine_transform(art.lines, fit), affinity.affine_transform(art.fill, fit)
+    if rot:
+        lines, fill = affinity.rotate(lines, rot, origin=(0, 0)), affinity.rotate(fill, rot, origin=(0, 0))
+    if fill.is_empty:
+        return MultiPolygon(), lines, MultiPolygon()
+    if item.get("style") == "outline":
+        return fill, lines, MultiPolygon()
+    if size <= FILL_MAX + 1e-9:
+        return MultiPolygon(), lines, fill
+    return fill, unary_union([lines, textures.line_hatch(fill, HATCH, angles=(45, -45))]), MultiPolygon()
 
 
 def _svg(item, size, rot):
@@ -260,10 +300,13 @@ def _spot(bounds, anchor):
 
 
 def place(item, face):
-    """The item on the face, view coordinates: (polygons, lines, bounds) or None when it draws nothing. A hole's
-    polygon is the hole itself."""
-    polys, lines = (_hole_poly(_hole_dims(item)), MultiLineString()) if item.get("kind") == "hole" else _block(item)
-    geo = [g for g in (polys, lines) if not g.is_empty]
+    """The item on the face, view coordinates: (polygons, lines, bounds, fill) or None when it draws nothing. A
+    hole's polygon is the hole itself."""
+    if item.get("kind") == "hole":
+        polys, lines, fill = _hole_poly(_hole_dims(item)), MultiLineString(), MultiPolygon()
+    else:
+        polys, lines, fill = _block(item)
+    geo = [g for g in (polys, lines, fill) if not g.is_empty]
     if not geo:
         return None
     bounds = unary_union(geo).bounds
@@ -273,7 +316,7 @@ def place(item, face):
     dx, dy = fx + float(item.get("dx") or 0) - ix, fy + float(item.get("dy") or 0) - iy
     move = lambda g: affinity.translate(g, dx, dy)
     x0, y0, x1, y1 = bounds
-    return move(polys), move(lines), (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
+    return move(polys), move(lines), (x0 + dx, y0 + dy, x1 + dx, y1 + dy), move(fill)
 
 
 def _outline_lines(polys):
@@ -286,7 +329,8 @@ def _round(g):
 
 
 def decorate(parts, asm, faces_req, t, boards=None):
-    """The face editor's items as decorations: ({part index: [(layer, lines)]} in part coordinates, for the sheets,
+    """The face editor's items as decorations: ({part index: [(layer, lines, or FILL's polygons)]} in part
+    coordinates, for the sheets,
     the 3D and LightBurn; {role: face info} for the editor: the face's size, outline, free area and what covers it,
     and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face};
     {part index: [(dims, centre)]} the holes, part coordinates, for with_holes; {part index: [(layer, lines)]} what
@@ -314,18 +358,18 @@ def decorate(parts, asm, faces_req, t, boards=None):
                     items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
                                       "error": "drag it onto the top or bottom edge"})
                     continue
-                poly, lines, (x0, y0, x1, y1) = got
+                poly, lines, (x0, y0, x1, y1), _fill = got
                 dy = (face.h if row == "t" else 0.0) - (y0 + y1) / 2
-                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy))
+                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy), _fill)
             if item.get("board"):                      # an edge connector: at the board, only its x is the item's
                 if face.floor is None or not isinstance(board, (int, float)):
                     items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
                                       "error": "set the board's height on this wall" if face.floor is not None
                                       else "only on a wall of a box with a floor"})
                     continue
-                poly, lines, (x0, y0, x1, y1) = got
+                poly, lines, (x0, y0, x1, y1), _fill = got
                 dy = face.floor + board + float(item.get("lift", -EDGE_AIR)) - y0
-                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy))
+                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy), _fill)
             cut.append((item, got[0], got[2]))
         here = []
         for item, poly, bounds in cut:
@@ -351,18 +395,23 @@ def decorate(parts, asm, faces_req, t, boards=None):
         for item in (it for it in reqs if it.get("kind") != "hole"):
             try:
                 got = place(item, face)
-            except ValueError as e:                     # an imported file that isn't SVG
+            except ValueError as e:                     # an imported file that isn't SVG, a logo that's gone
                 items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "error": str(e)})
                 continue
             if got is None:
                 items_out.append({"id": item.get("id"), "bounds": None, "bad": False, "lines": []})
                 continue
-            polys, lines, bounds = got
+            polys, lines, bounds, fill = got
             engraved = unary_union([g for g in (_outline_lines(polys), lines) if not g.is_empty])
-            bad = not face.free.contains(box(*bounds)) or (holes_view is not None and holes_view.intersects(engraved))
-            (deco_in if face.inside else deco).setdefault(face.part, []).append((M.LINE, face.to_part(engraved)))
+            bad = not face.free.contains(box(*bounds)) or (holes_view is not None and (
+                holes_view.intersects(engraved) or holes_view.intersects(fill)))
+            out = (deco_in if face.inside else deco).setdefault(face.part, [])
+            if not engraved.is_empty:
+                out.append((M.LINE, face.to_part(engraved)))
+            if not fill.is_empty:                      # a small logo's filled shapes (FILL outlines and fills them)
+                out.append((M.FILL, face.to_part(fill)))
             items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad,
-                              "lines": _round(engraved)})
+                              "lines": _round(engraved), "fill": _rings(fill)})
         info[role] = {"part": face.part, "w": round(face.w, 2), "h": round(face.h, 2),
                       "outline": _rings(face.outline), "free": _rings(face.free), "covered": _rings(face.covered),
                       "items": items_out, "fixed": [],
@@ -465,8 +514,51 @@ def _rings(g):
 
 
 def logos():
-    """The house logos on this PC (serve.py hands them over; none without it)."""
-    return SS.logo_files()
+    """The logos folder's logos on this PC, .svg and .lbrn2 (serve.py hands them over; none without it). The stamp
+    case lists its own: SVGs only."""
+    names = set()
+    for d in SC.LOGO_DIRS:
+        try:
+            names.update(f for f in os.listdir(d) if f.lower().endswith(LOGO_KINDS))
+        except OSError:
+            pass
+    return sorted(names, key=str.lower)
+
+
+PREVIEW = 0.004                  # simplify the library's previews by this much of the logo's size
+
+
+def _d(g, close):
+    """SVG path data of lines (or of polygons' rings, closed), y up as drawn."""
+    rings = [r for q in lbrn._polys(g) for r in [q.exterior, *q.interiors]] if close else lbrn._lines(g)
+    return "".join("M" + "L".join("%.2f %.2f" % c for c in r.coords) + ("Z" if close else "") for r in rings)
+
+
+def library():
+    """The logo library for the face editor's Add logo: per logo its file, its size as drawn (w, h, mm), whether it
+    has filled shapes, and a preview (path data of its strokes and of its filled areas, y up); a file that can't be
+    read comes with its error instead. The worker has just copied the folder again: SVGs are read afresh too."""
+    SS._logo_raw.cache_clear()
+    out = []
+    for name in logos():
+        e = {"logo": name, "label": os.path.splitext(name)[0]}
+        try:
+            if name.lower().endswith(".svg"):
+                lines, fill = SS._logo_raw(SS.logo_path(name)), MultiPolygon()
+            else:
+                art = lbrnart.load(SS.logo_path(name))
+                lines, fill = art.lines, art.fill
+            geo = [g for g in (lines, fill) if not g.is_empty]
+            if not geo:
+                raise ValueError("nothing to engrave")
+            x0, y0, x1, y1 = unary_union(geo).bounds
+            tol = PREVIEW * max(x1 - x0, y1 - y0)
+            e.update(w=round(x1 - x0, 2), h=round(y1 - y0, 2), box=[round(v, 2) for v in (x0, y0, x1, y1)],
+                     fills=not fill.is_empty, lines=_d(lines.simplify(tol), False), fill=_d(fill.simplify(tol), True))
+        except (OSError, ValueError, TypeError) as err:
+            e["error"] = str(err) or type(err).__name__
+        out.append(e)
+    return out
 
 
 def problems(info):

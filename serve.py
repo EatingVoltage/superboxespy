@@ -93,22 +93,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def send_logo(self, name):
-        """GET /api/logos: the house logos' names (JSON); /api/logos/<name>.svg: one of them. The logos are private and
-        never ship with the app (.grill/stamp-case-merge.md): they come from Samuel's folder, to this PC's own page."""
+        """GET /api/logos: the house logos' names (JSON); /api/logos/<name>: one of them, an .svg or a LightBurn .lbrn2
+        (.grill/logo-library.md). The logos are private and never ship with the app (.grill/stamp-case-merge.md): they
+        come from Samuel's folder, to this PC's own page."""
         host = self.headers.get("Host", "")
         port = self.server.server_address[1]
         if host not in ("localhost:%d" % port, "127.0.0.1:%d" % port):
             self.send_error(403)
             return
         try:
-            names = sorted(f for f in os.listdir(LOGO_DIR) if f.lower().endswith(".svg"))
+            names = sorted(f for f in os.listdir(LOGO_DIR) if f.lower().endswith((".svg", ".lbrn2")))
         except OSError:
             names = []
         if not name:
             body, kind = json.dumps(names).encode("utf-8"), "application/json"
         elif name in names:      # only a file that is in the folder: no paths
             with open(os.path.join(LOGO_DIR, name), "rb") as f:
-                body, kind = f.read(), "image/svg+xml"
+                body, kind = f.read(), "image/svg+xml" if name.lower().endswith(".svg") else "application/xml"
         else:
             self.send_error(404)
             return

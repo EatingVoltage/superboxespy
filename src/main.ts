@@ -465,6 +465,7 @@ const faceEditor = new FaceEditor($("face-tabs"), $("face"), $("face-bar"), {
     S.faces = faces;
     changed(true);
   },
+  refresh: () => void rebuild(true),
   showSheets: (on) => stampHost.showSheets(on),
 });
 

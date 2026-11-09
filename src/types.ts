@@ -18,7 +18,7 @@ export interface PartJ {
   children?: ShapePoly[][];
   area: number;
   walls: Wall[];
-  deco: { layer: number; lines: Pt[][] }[];
+  deco: { layer: number; lines: Pt[][]; polys?: Pt[][][]; side?: "in" }[];   // polys: FILL's areas, [outer, holes...]
 }
 
 export interface Placement { part: number; sheet: number; x: number; y: number; rot: number }
@@ -39,7 +39,21 @@ export interface Build {
   assembly?: unknown;
   stampcase?: StampData;       // StampCase only: what the board editor draws and hit-tests
   faces?: Record<string, FaceInfo>;   // the closed box's faces for the face editor (python/superboxes/faces.py)
-  logos?: string[];            // the house logos on this PC (serve.py)
+  logos?: string[];            // the logos folder's .svg and .lbrn2 files on this PC (serve.py)
+}
+
+/** A logo in the library (python faces.library): its size as drawn, whether it has filled shapes, and a preview's
+ *  path data (y up, inside `box`). A file that can't be read has only its error. */
+export interface LogoEntry {
+  logo: string;
+  label: string;
+  w?: number;
+  h?: number;
+  box?: number[];
+  fills?: boolean;
+  lines?: string;
+  fill?: string;
+  error?: string;
 }
 
 /** An item on a box face, in the face's view seen from outside (mm, y up): its own anchor point sits (dx, dy) from
@@ -48,7 +62,7 @@ export interface FaceItem {
   id: string;
   kind: "text" | "logo" | "svg" | "hole";
   text?: string;               // lines split by \n
-  logo?: string;               // a house logo's file name
+  logo?: string;               // a file in the logos folder (.svg or .lbrn2), linked by name
   svg?: string;                // an imported SVG's text (it travels in the box file)
   name?: string;               // the imported file's name
   shape?: "round" | "rect" | "notch";   // a hole: round (d), a rectangle (w, h, corner radius r), or a thumb notch
@@ -62,7 +76,7 @@ export interface FaceItem {
   lift?: number;               // its bottom from the board's top, mm (-0.5: air below)
   size: number;                // cap height, or a logo's height, mm
   bold?: boolean;
-  style?: "outline" | "hatch";
+  style?: "outline" | "hatch"; // a .lbrn2 logo: "outline" for outlines only, else as drawn
   rot: 0 | 90 | 180 | 270;
   anchor: string;              // tl t tr l c r bl b br
   dx: number;
@@ -80,7 +94,8 @@ export interface FaceInfo {
   fixed: number[][][];         // what else is engraved there (the maker's mark), lines
   floor: number | null;        // a wall's: the box's inside floor, view y
   board: number | null;        // a wall's: the board's top, view y, once its height is set
-  items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][]; error?: string; hole?: boolean }[];
+  items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][]; fill?: number[][][]; error?: string;
+           hole?: boolean }[];   // fill: a small logo's filled areas (FILL), rings
 }
 
 // ------------------------------------------------------------------ the stamp case (python/superboxes/stampcase)
