@@ -77,13 +77,14 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   above the highest part (the **top rest piece**), then right of the parts, a piece per step in their right edge.
   A piece needs 10 mm both ways, and a cut never runs above the reach line. The pieces come off square, so where a
   part's top or right edge has finger notches, the cut across them frees the small bits of wood in the notches too.
-- **3D:** orbit with the mouse. **Explode** pulls the box apart, **Open lid** / **Pull drawer** / **Lift cover**
-  moves what moves. **▶** next to a slider plays it back and forth; **▶ Show assembly** loops: the parts come
+- **3D:** orbit with the mouse. Its toolbar holds **▶ Assembly**, **Dimensions** and **Fit view**; the sliders sit
+  under it. **Explode** pulls the box apart, **Open lid** / **Pull drawer** / **Lift cover**
+  moves what moves. **▶** next to a slider plays it back and forth; **▶ Assembly** loops: the parts come
   together, the lid opens and closes, the box comes apart again. Grabbing a slider or **⏸** stops where it is.
 - **Dimensions** on the 3D: the finished outside (what calipers read on the closed box) and the inside, e.g.
   `50.0 in 42.6`. Sloped consoles give the inside height at the front and the back; a SlidingDrawer's inside is the
   drawer's. Boxes with compartments show each one's clear size on its floor (HobbyCase: each slot's opening), when
-  it fits on screen. The lines fade out while the box is open or exploded. The **Dimensions** switch hides them.
+  it fits on screen. The lines fade out while the box is open or exploded. **Dimensions** in the 3D's toolbar (lit while on) hides them.
 - **The camera follows the box:** after every change it keeps your viewing angle and glides so the whole box fits,
   with room for every pose the sliders reach, so exploding or opening never moves it. **Fit view** also turns back
   to the 3/4 view.

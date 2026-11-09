@@ -781,7 +781,7 @@ async function show3D() {
   if (!S.build || !view3dShown()) return;
   if (!view3d) {
     view3dLoading ??= import("./view3d").then((mod) => {
-      view3d = mod.createView3D($("view3d"), $("view3d-controls"), () => request(null));
+      view3d = mod.createView3D($("view3d"), $("view3d-tools"), $("view3d-controls"), () => request(null));
     });
     await view3dLoading;
   }

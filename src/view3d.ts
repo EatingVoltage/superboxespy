@@ -1,5 +1,7 @@
 // 3D half of the Box view: the assembled box (boxscene.ts) with Explode and Open sliders, each with a ▶ that sweeps
-// it back and forth, and "Show assembly", which loops like a gallery tile (assemble, open and close, explode).
+// it back and forth, and "▶ Assembly", which loops like a gallery tile (assemble, open and close, explode). Like the
+// 2D half, its buttons sit in a toolbar on top (▶ Assembly, Dimensions, Fit view); the pose sliders and the overlap
+// check stay at the bottom.
 // Dimension lines give the finished outside and the inside (calipers on the closed box); compartments get their
 // clear size on the floor. After every rebuild the camera keeps its angle and glides so the box fits in every pose
 // the sliders can reach. The overlap check runs on the pose shown once nothing moves - not while a parameter slider
@@ -10,6 +12,7 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import * as py from "./py";
 import { BAD, BAD_EDGE, CHAR, GeometryCache, WOOD, buildBoxScene, lights, type BoxScene, type Pt3 } from "./boxscene";
+import { btn, fillToolbar, toggle } from "./ui";
 import type { Build } from "./types";
 
 const PLY = new THREE.MeshStandardMaterial({ color: 0x8a7a5e, roughness: 1, transparent: true, opacity: 0.35 });
@@ -17,7 +20,7 @@ const VIEW = new THREE.Vector3(0.9, -1.5, 1.1).normalize();   // the default 3/4
 const GLIDE_MS = 150;
 const FILL = 0.92;            // share of the view the motion envelope fills
 const LOOP_MS = 4000;         // a slider's ▶: 0 → 100 → 0
-const SEQ = { rest: 0.6, assemble: 900, play: 3600, hold: 400, explode: 900, pause: 700 };   // "Show assembly"
+const SEQ = { rest: 0.6, assemble: 900, play: 3600, hold: 400, explode: 900, pause: 700 };   // "▶ Assembly"
 type SeqPhase = "assemble" | "play" | "hold" | "explode" | "pause";
 
 const ease = (x: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, x)), 3);
@@ -39,7 +42,7 @@ function remember(key: string, v: boolean) {
   }
 }
 
-export function createView3D(el: HTMLElement, controlsEl: HTMLElement, getRequest: () => object) {
+export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: HTMLElement, getRequest: () => object) {
   el.replaceChildren();
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -138,33 +141,24 @@ export function createView3D(el: HTMLElement, controlsEl: HTMLElement, getReques
     wrap.append(lab, play);
     return { wrap, input, text, play };
   };
-  const seqBtn = document.createElement("button");
-  seqBtn.type = "button";
-  seqBtn.className = "play-seq";
+  const seqBtn = btn("▶ Assembly", "Show the assembly: assemble, open and close, explode - in a loop",
+    () => (seq ? stopSeq() : startSeq()), "play-seq");
   seqBtn.setAttribute("aria-pressed", "false");
-  seqBtn.title = "Assemble, open and close, explode - in a loop";
-  seqBtn.onclick = () => (seq ? stopSeq() : startSeq());
   const explode = mk("explode", "Explode");
   const open = mk("open", "Open lid");
-  const dimToggle = document.createElement("label");
-  dimToggle.className = "dim-toggle";
-  const dimBox = document.createElement("input");
-  dimBox.type = "checkbox";
-  dimBox.checked = showDims;
-  dimBox.onchange = () => {
-    showDims = dimBox.checked;
-    remember("superboxes.dims", showDims);
-    dimSide = "";
-    redraw();
-    fit(true);
-  };
-  dimToggle.append(dimBox, document.createTextNode("Dimensions"));
+  const dimToggle = toggle("Dimensions", "The finished outside and the inside, as calipers read them on the closed box",
+    showDims, (on) => {
+      showDims = on;
+      remember("superboxes.dims", showDims);
+      dimSide = "";
+      redraw();
+      fit(true);
+    });
   const status = document.createElement("span");
-  const reset = document.createElement("button");
-  reset.textContent = "Fit view";
-  reset.title = "Fit the box and turn back to the 3/4 view";
-  reset.onclick = () => fit(true, true);
-  controlsEl.append(seqBtn, explode.wrap, open.wrap, dimToggle, reset, status);
+  const reset = btn("Fit view", "Fit the box and turn back to the 3/4 view", () => fit(true, true));
+  fillToolbar(toolsEl, [seqBtn, dimToggle], [reset]);
+  toolsEl.hidden = false;
+  controlsEl.append(explode.wrap, open.wrap, status);
 
   // ---- size and camera
   let size = "";
@@ -399,7 +393,7 @@ export function createView3D(el: HTMLElement, controlsEl: HTMLElement, getReques
       c.play.textContent = loops[k] ? "⏸" : "▶";
       c.play.setAttribute("aria-pressed", String(!!loops[k]));
     }
-    seqBtn.textContent = seq ? "⏸ Show assembly" : "▶ Show assembly";
+    seqBtn.textContent = seq ? "⏸ Assembly" : "▶ Assembly";
     seqBtn.setAttribute("aria-pressed", String(!!seq));
   }
 
