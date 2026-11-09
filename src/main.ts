@@ -8,7 +8,7 @@ import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import * as sc from "./stampcase";
 import { FaceEditor, type Faces } from "./faceeditor";
-import { btn, fillToolbar, menu, type MenuItem } from "./ui";
+import { btn, fillToolbar, helpButton, helpCard, menu, type MenuItem } from "./ui";
 import { A3 } from "./types";
 import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
@@ -432,10 +432,10 @@ const stampHost: sc.StampHost = {
   },
 };
 
-const editor = new sc.BoardEditor($("board-tabs"), $("board"), $("board-bar"), stampHost);
+const editor = new sc.BoardEditor($("board-tabs"), $("board-tools"), $("board"), $("board-bar"), stampHost);
 
 // ------------------------------------------------------------------ face editor (every type but the stamp case)
-const faceEditor = new FaceEditor($("face-tabs"), $("face"), $("face-bar"), {
+const faceEditor = new FaceEditor($("face-tabs"), $("face-tools"), $("face"), $("face-bar"), {
   build: () => S.build,
   faces: () => S.faces,
   boards: () => S.boards,
@@ -487,7 +487,6 @@ function renderInspector(i: number | null) {
     h("span", {}, `${p.w.toFixed(1)} × ${p.h.toFixed(1)} mm`),
     h("span", {}, pl ? `sheet ${pl.sheet + 1} · ${pl.rot}° · x ${pl.x.toFixed(1)} y ${pl.y.toFixed(1)}` : ""),
     markHere,
-    h("span", { class: "hint" }, "drag · R rotate · arrows nudge (Shift ×10) · PgUp/PgDn sheet"),
   );
 }
 
@@ -815,7 +814,20 @@ function renderSheetTools() {
     }),
     btn("−", "Zoom out (Ctrl+wheel)", () => zoom(1 / 1.2), "zoom-btn"),
     btn("+", "Zoom in (Ctrl+wheel)", () => zoom(1.2), "zoom-btn"),
-  ]);
+  ], [helpButton((b) => helpCard(b, "Sheets", [
+    ["Drag", "move a part, onto another sheet too"],
+    ["R", "rotate the selected part"],
+    ["Arrows", "nudge 1 mm (Shift: 10 mm)"],
+    ["PgUp / PgDn", "to the sheet before / after"],
+    ["Ctrl+wheel", "zoom"],
+    ["Double-click", "empty space: the sheets fill the view (again: split)"],
+    ["Esc", "deselect"],
+    ["Ctrl+Z / Ctrl+Y", "undo / redo"],
+  ], [
+    "Red: closer than 1.5 mm to another part or 3 mm to the edge, or above the 390 mm reach line. It blocks the export.",
+    "Magenta dashes: the cuts that free the rest pieces (Cut the rest pieces free, in the side panel).",
+    "Re-pack forgets the parts you placed by hand. Mark here (a part's bar) moves the maker's mark onto that part.",
+  ]))]);
 }
 
 const SPLIT_KEY = "superboxes.split";
@@ -1045,6 +1057,14 @@ function wire() {
     if (!$("calib").closest<HTMLElement>(".pane")!.hidden) {
       if (e.key === "Escape") tab("box");          // the calibration's keys: Esc goes back to the box
       return;
+    }
+    if (e.key === "?" && !ctrl) {                  // the ? card of the 2D view shown
+      const help = [...document.querySelectorAll<HTMLElement>(".half-sheets .toolbar .help-btn")].find((b) => b.offsetParent);
+      if (help) {
+        e.preventDefault();
+        help.click();
+        return;
+      }
     }
     if (ctrl && (k === "z" || k === "y")) {
       e.preventDefault();

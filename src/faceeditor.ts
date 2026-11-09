@@ -9,9 +9,13 @@
 // Add logo opens the logo library (.grill/logo-library.md): the logos folder's .svg and LightBurn .lbrn2 files, read
 // again each time it opens. Drag one onto the face (it lands where it's dropped, at its true size), or click it. A
 // selected text, logo or SVG has corner handles: drag one to size it, proportions kept, the opposite corner fixed.
+//
+// The toolbar over the face adds things (Text, Logo, SVG…, Hole ▾) and picks the side; its ? card holds the keys.
+// The bar under the face shows only the selected item's settings (.grill/ui-toolbars-menus.md).
 
 import { h } from "./params";
 import { call } from "./py";
+import { btn, fillToolbar, helpButton, helpCard, menuButton, seg, type MenuItem } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -135,8 +139,10 @@ export class FaceEditor {
   private resize: { id: string; fx: number; fy: number; hx: number; hy: number; b: number[]; size: number; k: number } | null = null;
   private lib: HTMLElement;                    // the logo library's popover
   private libMode: "add" | "swap" = "add";     // add a logo, or put one in place of the selected logo
+  private focusBoard = false;                  // an edge connector just went on a wall without a board height: ask
 
-  constructor(private tabs: HTMLElement, private root: HTMLElement, private bar: HTMLElement, private host: FaceHost) {
+  constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
+              private host: FaceHost) {
     this.svgRoot = svg("svg", { class: "board-svg face-svg", tabindex: 0 }) as SVGSVGElement;
     this.lib = h("div", { class: "face-lib", role: "dialog", "aria-label": "Logo library", tabindex: -1, hidden: true });
     this.lib.addEventListener("keydown", (e) => {
@@ -162,7 +168,7 @@ export class FaceEditor {
     }
     // switched off: hide what's ours and leave the 2D half to the stamp case's editor
     this.closeLibrary();
-    this.root.hidden = this.bar.hidden = true;
+    this.root.hidden = this.bar.hidden = this.tools.hidden = true;
   }
 
   /** The face shown, or null on Sheets. */
@@ -184,12 +190,14 @@ export class FaceEditor {
     if (this.tab !== "sheets" && !(info[this.tab] && READY.has(this.tab))) this.setTab("sheets");
     if (this.selected && !this.items().some((i) => i.id === this.selected)) this.selected = null;
     this.renderTabs();
+    this.renderTools();
     this.draw();
     this.renderBar();
   }
 
   private showFace(on: boolean) {
-    this.root.hidden = this.bar.hidden = !on;
+    this.root.hidden = this.tools.hidden = !on;
+    this.bar.hidden = !on || !this.selected;
     this.host.showSheets(!on);
   }
 
@@ -202,6 +210,7 @@ export class FaceEditor {
     this.side = side;
     this.selected = null;
     this.closeLibrary();
+    this.renderTools();
     this.draw();
     this.renderBar();
   }
@@ -213,6 +222,7 @@ export class FaceEditor {
     this.closeLibrary();
     this.renderTabs();
     this.showFace(role !== "sheets");
+    this.renderTools();
     this.draw();
     this.renderBar();
   }
@@ -469,6 +479,8 @@ export class FaceEditor {
       ...(p.shape === "rect" ? { w: p.w ?? 20, h: p.h ?? 10, r: p.r ?? 1 } : { d: p.d ?? 6 }),
       ...(p.name ? { part: p.name } : {}),
       ...(p.kind === "edge" ? { board: true, lift: p.lift ?? -0.5 } : {}) };
+    // the first connector on a wall asks for the board's height: its bar opens with the field in focus
+    if (p.kind === "edge" && this.host.boards()[this.tab] == null) this.focusBoard = true;
     this.addItem(item);
   }
 
@@ -479,29 +491,29 @@ export class FaceEditor {
     this.host.commit(faces);
   }
 
-  private holeMenu(): HTMLSelectElement {
-    const sel = h("select", { "aria-label": "Add a hole", title: "A hole through the wood (CUT), at its finished size: the kerf is taken care of" }) as HTMLSelectElement;
-    sel.append(h("option", { value: "", selected: true, disabled: true }, "Add hole…"),
-      h("option", { value: "round" }, "Round, any size"), h("option", { value: "rect" }, "Rectangle, any size"),
-      h("option", { value: "notch" }, "Thumb notch, on an edge"));
-    const list: HolePreset[] = [];
-    holePresets().then((ps) => {
-      list.push(...ps);
-      const panel = h("optgroup", { label: ps.length ? "Parts library" : "Parts library: none (start the app with serve.py)" });
-      const edge = h("optgroup", { label: "Edge connectors, at the board" });
-      ps.forEach((p, k) => {
-        const label = `${p.name}${p.kind === "window" ? " (window)" : ""} — ${holeSize(p)}`;
-        (p.kind === "edge" ? edge : panel).append(h("option", { value: `p${k}` }, label));
-      });
-      sel.append(panel);
-      if (edge.children.length && this.info()[this.faceKey]?.floor != null) sel.append(edge);
-    });
-    sel.onchange = () => {
-      const v = sel.value;
-      if (v === "round" || v === "rect" || v === "notch") this.addHole({ shape: v });
-      else if (v.startsWith("p")) this.addHole(list[Number(v.slice(1))]);
-    };
-    return sel;
+  /** Hole ▾: the plain shapes, the parts library's panel holes, and on a wall the edge connectors. A hole lands in
+   *  the face's centre (a notch on the top edge); drag it from there. */
+  private async holeItems(): Promise<MenuItem[]> {
+    const ps = await holePresets();
+    const wall = this.info()[this.faceKey]?.floor != null;
+    const panel = ps.filter((p) => p.kind !== "edge"), edge = ps.filter((p) => p.kind === "edge");
+    const items: MenuItem[] = [
+      { label: "Round", detail: "any size", run: () => this.addHole({ shape: "round" }) },
+      { label: "Rectangle", detail: "any size", run: () => this.addHole({ shape: "rect" }) },
+      { label: "Thumb notch", detail: "on an edge", title: "A half-round notch in a plain edge, to lift a lid",
+        run: () => this.addHole({ shape: "notch" }) },
+      { heading: "Parts library" },
+      ...(panel.length
+        ? panel.map((p): MenuItem => ({ label: p.name + (p.kind === "window" ? " (window)" : ""), detail: holeSize(p),
+          title: `${p.code}: its confirmed front-plate ${p.kind}`, run: () => this.addHole(p) }))
+        : [{ note: "None: start the app with serve.py (start.bat)" }]),
+    ];
+    if (wall && edge.length) {
+      items.push({ heading: "Edge connectors, at the board" },
+        ...edge.map((p): MenuItem => ({ label: p.name, detail: holeSize(p), title: "Its opening at the board's edge: it stays at the board",
+          run: () => this.addHole(p) })));
+    }
+    return items;
   }
 
   add(kind: "text") {
@@ -674,54 +686,60 @@ export class FaceEditor {
     return true;
   }
 
-  // ---------------------------------------------------------------- the bar under the face
+  // ---------------------------------------------------------------- the toolbar over the face
+  private renderTools() {
+    if (!this.active || this.tab === "sheets") return;
+    const add: (Node | string)[] = [h("span", { class: "tb-label" }, "Add"),
+      btn("Text", "Text in eV Sans, engraved", () => this.add("text")),
+      btn("Logo", "The logo library: drag a logo onto the face, or click it", () => this.openLibrary("add")),
+      btn("SVG…", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +
+        "The file is kept in the box.", () => this.importSvg())];
+    if (this.side === "out") {
+      add.push(menuButton("Hole", "A hole through the wood (CUT), at its finished size: the kerf is taken care of",
+        () => this.holeItems()));
+    }
+    const sides = seg<"out" | "in">("Seen from", [["out", "Outside", "The face as seen from outside the box"],
+      ["in", "Inside", "Its other side, as seen from inside the box: engraved on a page of its own before the sheet's, " +
+        "the sheet turned over left to right"]], this.side, (v) => this.setSide(v));
+    fillToolbar(this.tools, add, [sides, h("span", { class: "tb-gap" }), helpButton((b) => this.openHelp(b))]);
+  }
+
+  /** The ? card: the keys, then what the face's lines and colours mean. */
+  private openHelp(anchor: HTMLElement) {
+    const f = this.info()[this.faceKey];
+    const inside = this.side === "in";
+    const notes = ["The dashed line keeps the wood's thickness + 1.5 mm off the edges and the finger joints. An item " +
+      "across it turns red and blocks the export."];
+    if (f?.covered.length) notes.push(inside ? "Grey: where other parts meet this face inside the box."
+      : "Grey: covered on the closed box (a lid's rim).");
+    if (inside) notes.push("Inside: engraved on the part's other side. The export adds a page before the sheet's, for the " +
+      "sheet turned over left to right. Holes go through anyway: add them outside.");
+    if (f?.board != null) notes.push("Green dashes: the board's top. Edge connectors (Hole ▾) sit at it and only move " +
+      "sideways; its height is in a connector's bar.");
+    if (f?.fixed.length) notes.push("The maker's mark moves out of the items' way.");
+    helpCard(anchor, `${TITLE[this.tab]}, seen from ${inside ? "inside" : "outside"}` +
+      (f ? ` · ${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm` : ""), [
+      ["Drag", "move an item. It pins to the nearest corner, edge middle or the centre, and keeps that place when the box changes size"],
+      ["Corner", "drag a selected item's corner to size it: proportions kept, 0.5 mm steps"],
+      ["R / Shift+R", "rotate a quarter turn, either way"],
+      ["Arrows", "nudge 1 mm (Shift: 10 mm)"],
+      ["Ctrl+D", "duplicate"],
+      ["Del", "delete"],
+      ["Esc", "deselect"],
+      ["Ctrl+Z / Ctrl+Y", "undo / redo"],
+    ], notes);
+  }
+
+  // ---------------------------------------------------------------- the bar under the face: the selected item
   private renderBar() {
     const f = this.info()[this.faceKey];
-    if (!f) return;
     const it = this.items().find((i) => i.id === this.selected);
-    const btn = (label: string, title: string, run: () => void) => {
-      const b = h("button", { title }, label);
-      b.onclick = run;
-      return b;
-    };
-    const kids: (Node | string)[] = [];
-    const sides = h("span", { class: "seg", role: "group", "aria-label": "Seen from" });
-    for (const [v, label, title] of [["out", "Outside", "The face as seen from outside the box"],
-      ["in", "Inside", "Its other side, as seen from inside the box: engraved on a page of its own before the sheet's, " +
-        "the sheet turned over left to right"]] as const) {
-      const b = h("button", { "aria-pressed": this.side === v, title }, label);
-      b.onclick = () => this.setSide(v);
-      sides.append(b);
-    }
-    kids.push(sides);
-    if (!it) {
-      if (f.floor != null) {                          // a wall: where the board with its edge connectors sits
-        const role = this.tab;
-        const v = this.host.boards()[role];
-        const board = h("input", { type: "number", min: 0, step: 0.1, value: v ?? "", class: "num", placeholder: "—",
-          "aria-label": "The board's top above the inside floor, mm" }) as HTMLInputElement;
-        board.onchange = () => this.host.setBoard(role, board.value === "" ? null : Math.max(0, Number(board.value)));
-        kids.push(h("label", { class: "check", title: "The board's top surface above the box's inside floor (standoff " +
-          "+ board): edge connectors' openings on this wall sit there" }, "Board at", board, "mm above the floor"));
-      }
-      kids.push(btn("Add text", "Text in eV Sans, engraved", () => this.add("text")),
-        btn("Add logo", "The logo library: drag a logo onto the face, or click it", () => this.openLibrary("add")),
-        btn("Import SVG", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +
-          "The file is kept in the box.", () => this.importSvg()),
-        this.side === "out" ? this.holeMenu() : "",
-        h("span", { class: "hint" }, `${TITLE[this.tab]}, seen from ${this.side === "in" ? "inside" : "outside"}: ` +
-          `${f.w.toFixed(0)} × ${f.h.toFixed(0)} mm. ` +
-          (this.side === "in" ? "Engraved on the part's other side: the export adds a page before this sheet's, for " +
-            "the sheet turned over. " : "") +
-          "Drag an item: it keeps its place from the nearest corner, edge or the centre when the box changes size; " +
-          "drag a selected item's corner to size it. " +
-          "The dashed line keeps clear of the edges and finger joints" +
-          (f.covered.length ? (this.side === "in" ? "; the grey part is where other parts meet it inside."
-            : "; the grey part is covered on the closed box (a lid's rim).") : ".") +
-          (f.fixed.length ? " The maker's mark moves out of the items' way." : "")));
-      this.bar.replaceChildren(...kids);
+    this.bar.hidden = this.root.hidden || !f || !it;
+    if (!f || !it) {
+      this.bar.replaceChildren();
       return;
     }
+    const kids: (Node | string)[] = [];
     const num = (value: number, label: string, set: (v: number) => void, step = 0.5, min = 1) => {
       const i = h("input", { type: "number", min, step, value: value, class: "num", "aria-label": label }) as HTMLInputElement;
       i.onchange = () => {
@@ -733,7 +751,7 @@ export class FaceEditor {
     const mm2 = (v: number) => +Math.abs(v).toFixed(2);
     const where = `${ANCHOR_NAME[it.anchor]}${it.dx || it.dy ? `, ${mm2(it.dx)} / ${mm2(it.dy)} mm` : ""}`;
     const got = f.items.find((i) => i.id === it.id);
-    const state = got?.error ? h("span", { class: "bad-text" }, `can't be read: ${got.error}`)
+    const state = got?.error ? h("span", { class: "bad-text" }, it.kind === "hole" ? got.error : `can't be read: ${got.error}`)
       : got?.bad ? h("span", { class: "bad-text" }, "runs into an edge, a finger joint or what covers it") : "";
     const styleSel = () => {
       const style = h("select", { "aria-label": "Engraving" }) as HTMLSelectElement;
@@ -765,6 +783,23 @@ export class FaceEditor {
         kids.push(h("span", {}, "Ø"), num(it.d ?? 6, "Diameter, mm", (v) => this.change(it.id, { d: v }), 0.01, 0.5));
       }
       kids.push(h("span", { class: "unit" }, "mm"));
+      if (it.board) {                                 // an edge connector: the wall's board height lives here
+        const role = this.tab;
+        const v = this.host.boards()[role];
+        const board = h("input", { type: "number", min: 0, step: 0.1, value: v ?? "", class: "num", placeholder: "—",
+          "aria-label": "The board's top above the inside floor, mm" }) as HTMLInputElement;
+        board.onchange = () => this.host.setBoard(role, board.value === "" ? null : Math.max(0, Number(board.value)));
+        kids.push(h("label", { class: `check${v == null ? " bad-text" : ""}`, title: "The board's top surface above the " +
+          "box's inside floor (standoff + board), the same for every connector on this wall" },
+          "board at", board, "mm above the floor"));
+        if (this.focusBoard) {
+          this.focusBoard = false;
+          requestAnimationFrame(() => {
+            board.focus();
+            board.select();
+          });
+        }
+      }
     } else if (it.kind === "svg") {
       kids.push(h("b", { title: "An imported SVG, kept in the box" }, it.name ?? "SVG"), h("span", {}, "height"),
         num(it.size, "Height, mm", (v) => this.change(it.id, { size: v })), h("span", { class: "unit" }, "mm"),

@@ -8,6 +8,7 @@
 
 import { h } from "./params";
 import { pathD } from "./sheetview";
+import { btn, fillToolbar, helpButton, helpCard } from "./ui";
 import type { Block, BlockKey, Build, Case, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -224,14 +225,6 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
     list.append(row);
   }
   g2.append(list);
-  const repack = h("button", { title: "Lay every pocket out from scratch: fewest sheets, then the smallest board (Ctrl+P)" }, "Re-pack stamps");
-  repack.onclick = () => host.op("repack");
-  const auto = h("button", { title: "Hand the magnets back to the app (Ctrl+M)", disabled: c.magnets_auto }, "Auto magnets");
-  auto.onclick = () => commit((n) => {
-    n.magnets_auto = true;
-    n.magnets = [];
-  });
-  g2.append(h("div", { class: "row btn-row" }, repack, auto));
   el.append(g2);
 
   // problems and sheets: refreshed on their own after every build (renderCheck), so typing isn't interrupted
@@ -285,7 +278,8 @@ export class BoardEditor {
   private drag: { hits: Hit[]; x0: number; y0: number; dx: number; dy: number; moved: boolean } | null = null;
   private pan: { x: number; y: number; v: [number, number, number, number] } | null = null;
 
-  constructor(private tabs: HTMLElement, private root: HTMLElement, private bar: HTMLElement, private host: StampHost) {
+  constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
+              private host: StampHost) {
     this.svgRoot = svg("svg", { class: "board-svg", tabindex: 0 }) as SVGSVGElement;
     root.append(this.svgRoot);
     this.svgRoot.addEventListener("wheel", (e) => this.wheel(e), { passive: false });
@@ -299,8 +293,8 @@ export class BoardEditor {
   /** Show the editor (stamp case) or hide it (any other type). */
   setActive(on: boolean) {
     this.tabs.hidden = !on;
-    this.root.hidden = !on || this.tab === "sheets";
-    this.bar.hidden = !on || this.tab === "sheets";
+    this.root.hidden = this.tools.hidden = !on || this.tab === "sheets";
+    this.bar.hidden = !on || this.tab === "sheets" || !this.selected.size;
     if (on) this.host.showSheets(this.tab === "sheets");     // off: the face editor decides what shows
   }
 
@@ -316,6 +310,7 @@ export class BoardEditor {
     const ids = new Set([...d.pockets.map((p) => p.id), ...d.magnets.map((_, i) => `magnet:${i}`), "top_block", "lid_title", "lid_logo"]);
     for (const s of [...this.selected]) if (!ids.has(s)) this.selected.delete(s);
     this.renderTabs();
+    this.renderTools();
     this.draw();
     this.renderBar();
   }
@@ -341,8 +336,9 @@ export class BoardEditor {
   private setTab(key: string) {
     this.tab = key;
     this.renderTabs();
-    this.root.hidden = this.bar.hidden = key === "sheets";
+    this.root.hidden = this.tools.hidden = key === "sheets";
     this.host.showSheets(key === "sheets");
+    this.renderTools();
     this.draw();
     this.renderBar();
   }
@@ -427,20 +423,56 @@ export class BoardEditor {
     this.svgRoot.replaceChildren(g);
   }
 
-  // ---------------------------------------------------------------- the bar under the editor
+  // ---------------------------------------------------------------- the toolbar over the board
+  private renderTools() {
+    const d = this.data();
+    if (!d || this.tab === "sheets") return;
+    const c = this.host.params();
+    const magnets = this.tab === d.top_key || this.tab === "lid";
+    const magnet = btn("Magnet", magnets ? "A magnet in the free wood nearest the board's middle (or double-click free wood)"
+      : "Magnets go on the top pocket board and the lid", () => {
+      const [x0, y0, x1, y1] = d.rect;
+      this.host.op("add_magnet", { x: (x0 + x1) / 2, y: (y0 + y1) / 2 });
+    });
+    magnet.disabled = !magnets;
+    const auto = btn("Auto magnets", "Hand the magnets back to the app (Ctrl+M)", () => this.edit((n) => {
+      n.magnets_auto = true;
+      n.magnets = [];
+    }));
+    auto.disabled = c.magnets_auto;
+    fillToolbar(this.tools, [h("span", { class: "tb-label" }, "Add"), magnet, h("span", { class: "tb-gap" }),
+      btn("Re-pack stamps", "Lay every pocket out from scratch: fewest sheets, then the smallest board (Ctrl+P)",
+        () => this.host.op("repack")), auto],
+    [helpButton((b) => this.openHelp(b))]);
+  }
+
+  private openHelp(anchor: HTMLElement) {
+    helpCard(anchor, "Stamp case boards", [
+      ["Click", "select a pocket, a magnet or a text block (Shift+click: add to the selection)"],
+      ["Drag", "move what's selected"],
+      ["R", "rotate a pocket or a text block"],
+      ["F", "flip the finger notch to the other side"],
+      ["E", "the notch to the other end"],
+      ["N", "where the stamp's name goes: beside the notch, opposite side, far end"],
+      ["Arrows", "nudge (Shift: 10 steps)"],
+      ["Ctrl+D", "duplicate a pocket"],
+      ["Del", "delete"],
+      ["Double-click", "free wood on the top pocket board or the lid: a magnet"],
+      ["Wheel", "zoom; middle button pans, Ctrl+0 fits"],
+      ["Ctrl+P / Ctrl+M", "re-pack the stamps / auto magnets"],
+    ], ["Red: what the side panel's Check lists as an error (click one there to see it)."]);
+  }
+
+  // ---------------------------------------------------------------- the bar under the editor: the selection
   private renderBar() {
     const d = this.data();
     const c = this.host.params();
+    this.bar.hidden = !d || this.tab === "sheets" || this.root.hidden || !this.selected.size;
     if (!d || this.tab === "sheets") return;
     const sel = [...this.selected];
     const pockets = c.pockets.filter((p) => this.selected.has(p.id));
     const blocks = sel.filter((s): s is BlockKey => s in d.blocks);
     const mags = sel.filter((s) => s.startsWith("magnet:"));
-    const btn = (label: string, title: string, run: () => void) => {
-      const b = h("button", { title }, label);
-      b.onclick = run;
-      return b;
-    };
     const kids: (Node | string)[] = [];
     if (pockets.length === 1) {
       const p = pockets[0];
@@ -465,11 +497,6 @@ export class BoardEditor {
         btn(geo.placed ? "Auto place" : "placed automatically", "Let the app place it again", () => this.edit((n) => (n[k].placed = false))));
     }
     if (mags.length) kids.push(h("b", {}, `${mags.length} magnet${mags.length > 1 ? "s" : ""}`), btn("Delete", "Del", () => this.remove()));
-    if (!kids.length) {
-      kids.push(h("span", { class: "hint" }, "click a pocket, magnet or text block · drag to move · R rotate · F flip notch · E notch end · " +
-        "N name position · Ctrl+D duplicate · Del delete" + (this.tab === d.top_key || this.tab === "lid" ? " · double-click free wood: magnet" : "") +
-        " · wheel zoom, middle button pan, Ctrl+0 fit"));
-    }
     this.bar.replaceChildren(...kids);
   }
 

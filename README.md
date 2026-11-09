@@ -96,10 +96,12 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   **Engrave part labels** is off by default: labels then only sit on T1 (shown in LightBurn, never cut).
 - **Text, logos and SVG on the faces** (the face editor: `.grill/face-editor.md`). Beside **Sheets** there's a tab
   per face of the closed box (Top, Front, Back, Left, Right, Bottom), each seen from outside: a wall with the box's
-  up on top, the top with the front toward you, the bottom tipped toward you. **Add text** (eV Sans, Regular or Bold,
-  outline or hatched, several lines), **Add logo** (the logo library, below) or **Import SVG** (line art: its
-  paths and shapes; convert text to paths first; its own size if the file says it in mm; the file is kept in the box),
-  then drag it; drag a selected item's corner to size it (proportions kept, 0.5 mm steps). Where you drop an item it pins to the nearest corner, edge middle or the centre and keeps its distance
+  up on top, the top with the front toward you, the bottom tipped toward you. The toolbar over the face adds things:
+  **Text** (eV Sans, Regular or Bold, outline or hatched, several lines), **Logo** (the logo library, below),
+  **SVG…** (line art: its paths and shapes; convert text to paths first; its own size if the file says it in mm; the
+  file is kept in the box) and **Hole ▾** (below). At its right end: **Outside | Inside** and **?**, the card with the
+  keys and what the lines mean (the **?** key opens it too, on every view). The bar under the face shows only the
+  selected item's settings. Drag an item; drag a selected item's corner to size it (proportions kept, 0.5 mm steps). Where you drop an item it pins to the nearest corner, edge middle or the centre and keeps its distance
   from it, so a centred title stays centred and a corner logo stays in its corner when the box changes size; text
   lines align to that side. The dashed line keeps the thickness + 1.5 mm off the edges and finger joints, and off
   what covers a face on the closed box (grey: an over-the-top lid's rim over the walls): an item across it turns red
@@ -107,7 +109,7 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   The items engrave on LINE on the side that faces out, and show on the 3D and the sheets. A face the box only has
   as a part that would need cutting mirrored (Console's and Console2's right sides, Console2's back wall) isn't
   offered.
-- **The logo library** (`.grill/logo-library.md`): **Add logo** opens every logo in
+- **The logo library** (`.grill/logo-library.md`): **Logo** opens every logo in
   `C:\Projects\eating voltage Fonts\logos`, through `serve.py` (private: they never ship with the app). Drag one onto
   the face (it lands where you drop it, 20 mm high) or click it; **Change…** puts another in place of the selected one.
   A logo is an `.svg` (its strokes) or a LightBurn `.lbrn2`, one logo per file, its first page as LightBurn draws it:
@@ -116,21 +118,22 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   LightBurn keeps its outline in the file. Bitmaps are left out. A box links its logo by name: change the file and
   every box using it follows (the library reads the folder again each time it opens); a file that's gone turns the
   item red.
-- **Holes for device panels**: **Add hole…** on a face gives a round or rounded-rectangle hole of any size, or the
+- **Holes for device panels**: **Hole ▾** on a face gives a round or rounded-rectangle hole of any size, or the
   panel hole of a part from your parts library (`%USERPROFILE%\eatingVoltageLibrary`, DeviceWizard's: every part with
   a confirmed front-plate hole or window, read by `serve.py`, never in this repo): RK09 pots, toggles, buttons, rotary
   switches, slide pots, the OLED window... The size is the finished hole: the kerf is taken care of as for boxes.py's
   own holes (true circles and rounded corners in LightBurn). A hole cuts through the part on the sheets and in the 3D,
   keeps 2 mm of wood to the next hole, and an engraving across it turns red. **Duplicate** puts the copy beside it.
-  **Edge connectors** (the jack, USB-C, USB-A, the RP2350 module, the XH header) go in a wall at the board: set
-  **Board at … mm above the floor** on that wall once (standoff + board, its top surface) and pick the part under
-  **Edge connectors, at the board**. Its opening is the library's measured notch width at the board's edge (the
+  **Edge connectors** (the jack, USB-C, USB-A, the RP2350 module, the XH header) go in a wall at the board: pick the
+  part under **Edge connectors, at the board** in Hole ▾. The first one on a wall asks for **board at … mm above the
+  floor** (standoff + board, its top surface) in its bar, and every connector's bar on that wall shows the same value.
+  Its opening is the library's measured notch width at the board's edge (the
   jack 6.0, USB-C 10.2) and reaches from 0.5 below the board's top to 0.5 above the part, ends rounded; it stays at
   the board (a dashed line) and only moves sideways.
-  A **Thumb notch** (also under **Add hole…**) cuts a half-round notch into a plain edge, to lift a lid: drop it on a
+  A **Thumb notch** (also under **Hole ▾**) cuts a half-round notch into a plain edge, to lift a lid: drop it on a
   wall's top or bottom edge. On a shoebox (the over-the-top lid) put it in a wall's top edge, deeper than the lid's
   rim (the grey strip), so a finger reaches the rim's edge. An edge with finger joints refuses it (red).
-- **Inside faces**: **Outside / Inside** in a face's bar shows the face from inside the box (its other side; a
+- **Inside faces**: **Outside | Inside** in a face's toolbar shows the face from inside the box (its other side; a
   message under the lid). Text, logos and SVG go there too (holes go through anyway: outside); what meets the face
   inside (the floor, the side walls, the walls under a lid) is kept clear, grey. A sheet with inside engraving gets a
   page of its own before its normal page, mirrored: lay the sheet into a corner stop at the lower left and run
@@ -149,11 +152,13 @@ three times, magnets, the eV cut corner, the hatched lid title) are stampcaser's
 - **Side panel:** the project name (the lid's title), how many pocket boards (2 make pockets 7.4 mm deep), the logo,
   and the stamps. Type a stamp's name, width and height **as measured** and press Enter: 1 mm of air goes on every
   side and the pocket lands in free space. Each stamp's row edits its name and size; the **t** field takes its
-  thickness if you want it checked (empty is fine). **Re-pack stamps** (Ctrl+P) lays every pocket out from scratch:
-  fewest sheets, then the smallest board. **Auto magnets** (Ctrl+M) hands the magnets back to the app.
+  thickness if you want it checked (empty is fine).
 - **Check** lists what blocks the cut (red) and what's only a warning; click one to see it. Under it: the board
   size, how many boards a sheet takes, and when a board a few mm smaller would save a sheet.
-- **The 2D half** has a tab per board (Base, pocket boards, Lid) and **Sheets**. Drag pockets, magnets and the text
+- **The 2D half** has **Sheets** and a tab per board (Base, pocket boards, Lid). A board's toolbar has **Magnet**
+  (top pocket board and lid: one in the free wood nearest the middle), **Re-pack stamps** (Ctrl+P: every pocket laid
+  out from scratch, fewest sheets, then the smallest board) and **Auto magnets** (Ctrl+M: the magnets back to the
+  app), and **?** with the keys. Drag pockets, magnets and the text
   blocks; anything too close to something else turns red while you drag. **R** rotates (a pocket or a block),
   **F** moves the finger notch to the other side, **E** to the other end, **N** says where the stamp's name prefers to
   go (beside the notch, the opposite side, the far end), **Ctrl+D** duplicates, **Del** deletes, arrow keys nudge.
