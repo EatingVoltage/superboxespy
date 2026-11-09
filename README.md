@@ -18,9 +18,9 @@ Double-click **`start.bat`**. It serves the app on `http://localhost:5198` and o
 once. The **superboxes** entry starts the app without a console window. The server keeps running in the background,
 and starting the entry again opens another window on it.
 
-**Pick folder** (top right) once, e.g. `C:\Projects\Laser lightburn`. From then on every export goes to
+**File ▾ › Pick folder…** once, e.g. `C:\Projects\Laser lightburn`. From then on every export goes to
 `<folder>/<box name>/`: the LightBurn project (one page per sheet), the `.svg` sheets and the box's `.sbox`. The measured material
-values go to `<folder>/materials.json`.
+values go to `<folder>/materials.json`. The chip beside the box name says where files go ("in Laser lightburn").
 Chrome and Edge can do this out of the box. **Brave can't until you enable `brave://flags/#file-system-access-api`.**
 Without a folder, files are downloaded instead (several as a zip).
 
@@ -173,16 +173,19 @@ three times, magnets, the eV cut corner, the hatched lid title) are stampcaser's
 - **Save** (Ctrl+S) writes `<box name>.sbox`. It holds every parameter, not just the changed ones, plus the
   material, burn, fit, your sheet arrangement, the mark and your notes, and the boxes.py commit it was made with.
   Opening a box made with another boxes.py version shows a warning: check the parts before cutting.
-- **Open** reads a box. **Recent** lists the last 12 saved boxes in this browser.
-- **A box keeps its files beside it.** Opened with **Open** (Windows' own dialog) or saved with **Save as…**
+- **The top bar** holds the box type, its name, **File ▾**, **Save** and **Open in LightBurn** (the one amber button).
+  **File ▾** has the rest: New, Open… (Ctrl+O), Save as…, Copy share link, the two exports (LightBurn file only, SVGs),
+  the recent boxes and the folder.
+- **Open…** reads a box. The **Recent** part of File ▾ lists the last 12 saved boxes in this browser.
+- **A box keeps its files beside it.** Opened with **Open…** (Windows' own dialog) or saved with **Save as…**
   (Ctrl+Shift+S), or double-clicked, a box lives where its `.sbox` is: the chip next to its name shows the folder,
   and **Save**, the exports and **Open in LightBurn** write into that folder (`<name>.sbox`, `<name>.lbrn2`,
   `NN_<name>.svg`). So `C:\Projects\ELEMENTS SYNTH\hw\packaging\ELEMENTS REV.C PACKAGING.sbox` exports right there.
-  **Recent** reads such a box from its file again. `serve.py` does the reading and writing (a browser never learns
+  A recent box is read from its file again. `serve.py` does the reading and writing (a browser never learns
   full paths): it writes only `.sbox`, `.lbrn2` and `.svg` files beside a box, for this PC's own page. New boxes and boxes
   from a share link go to the picked folder, `<folder>/<box name>/`, as before. Under `npm run dev` there's no
   `serve.py`, so Open is the browser's and everything goes to the picked folder.
-- **Share link** copies a link that holds the whole box (compressed into the URL).
+- **Copy share link** copies a link that holds the whole box (compressed into the URL).
 - A box opened with other material values than your current profile keeps its own values and says so, with a
   button to switch to the profile.
 
@@ -196,9 +199,9 @@ first; Select All takes only the page shown. Layers and the Notes belong to the 
 page. Calibration sheets are `00a_kerf-test` and `00b_fit-comb` in
 `00_calibration/`.
 
-- **Export as LightBurn** writes the project (beside the box's own file, or with a folder: into
-  `<folder>/<box name>/`, plus the `.sbox`).
-- **Open in LightBurn** does the same, then opens the project in LightBurn. It needs a picked folder (it asks for
+- **Open in LightBurn** writes the project (beside the box's own file, or with a folder: into
+  `<folder>/<box name>/`, plus the `.sbox`), then opens it in LightBurn. **File ▾ › LightBurn file only** writes it
+  without opening LightBurn, **SVGs, one per sheet** the SVG sheets. Open in LightBurn needs a picked folder (it asks for
   one if there isn't one yet) and the app started from `start.bat` or the Start menu entry, because `serve.py` starts
   LightBurn: a browser can't. The browser also never learns the folder's full path, only its name, so `serve.py`
   looks for a folder by that name in your home folder and near the top of each fixed drive (e.g.

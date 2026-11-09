@@ -8,6 +8,7 @@ import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import * as sc from "./stampcase";
 import { FaceEditor, type Faces } from "./faceeditor";
+import { menu, type MenuItem } from "./ui";
 import { A3 } from "./types";
 import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
@@ -59,25 +60,6 @@ function setStatus(text: string) {
   const el = $("status");
   el.textContent = text;
   el.classList.toggle("busy", S.busy > 0 || text !== "Ready");
-}
-
-function menu(anchor: HTMLElement, items: { label: string; run: () => void }[], empty = "Nothing here yet") {
-  const m = $("menu");
-  m.replaceChildren();
-  if (!items.length) m.append(h("div", { class: "empty" }, empty));
-  for (const it of items) {
-    const b = h("button", {}, it.label);
-    b.onclick = () => {
-      m.hidden = true;
-      it.run();
-    };
-    m.append(b);
-  }
-  const r = anchor.getBoundingClientRect();
-  m.style.left = `${Math.min(r.left, innerWidth - 260)}px`;
-  m.style.top = `${r.bottom + 4}px`;
-  m.hidden = false;
-  setTimeout(() => document.addEventListener("click", () => (m.hidden = true), { once: true }), 0);
 }
 
 // ------------------------------------------------------------------ material and fit
@@ -665,19 +647,25 @@ async function openHome(path: string, text?: string): Promise<boolean> {
   return true;
 }
 
-/** The chip beside the box name: the folder the box lives in, when it has a file of its own. */
+/** The chip beside the box name: where Save and the exports go - the folder of the box's own file, else the
+ *  picked folder (<folder>/<box name>/). Without either, files are downloaded and there's no chip. */
 function showHome() {
   const el = $("home");
-  el.hidden = !S.home;
   const save = $("btn-save");
-  if (!S.home) {
-    save.title = "Save the box (Ctrl+S)";
-    return;
+  const folder = files.folderName();
+  el.hidden = !S.home && !folder;
+  if (S.home) {
+    const dir = files.dirOf(S.home);
+    el.textContent = files.fileOf(dir) || dir;
+    el.title = `${S.home}\nSave and the exports go into this folder.`;
+    save.title = `Save to ${S.home} (Ctrl+S)`;
+  } else if (folder) {
+    el.textContent = folder;
+    el.title = `Save and the exports go to ${folder}/<box name>/ (File ▾ changes the folder)`;
+    save.title = `Save to ${folder}/<box name>/ (Ctrl+S)`;
+  } else {
+    save.title = "Save the box (Ctrl+S): downloaded, until a folder is picked under File ▾";
   }
-  const dir = files.dirOf(S.home);
-  el.textContent = files.fileOf(dir) || dir;
-  el.title = `${S.home}\nSave and the exports go into this folder.`;
-  save.title = `Save to ${S.home} (Ctrl+S)`;
 }
 
 async function share() {
@@ -703,7 +691,7 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
   if (open && !S.home && !files.folderName()) {
     if (!files.canPickFolder()) {
       toast("Open in LightBurn writes the project into a folder, and this browser can't write into folders.\n" +
-        "Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api), or Export as LightBurn.", true, 9000);
+        "Use Chrome or Edge (in Brave: enable brave://flags/#file-system-access-api), or File ▾ › LightBurn file only.", true, 9000);
       return;
     }
     toast("Pick the folder the LightBurn files go to (e.g. C:\\Projects\\Laser lightburn).");
@@ -744,7 +732,7 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
     const dir = await place.write(withBox);
     if (!dir) {
       toast(S.home ? `Couldn't write beside ${S.home}.` :
-        "Couldn't write into the folder: the browser has no permission. Click the folder button and pick it again.", true, 9000);
+        "Couldn't write into the folder: the browser has no permission. Pick it again under File ▾.", true, 9000);
       return;
     }
     where = `Saved ${withBox.map((f) => f.name).join(", ")} to ${dir}`;
@@ -917,16 +905,63 @@ async function thumbnailBuild(name: string): Promise<Build | null> {
   return r.ok ? r : null;
 }
 
-// ------------------------------------------------------------------ wiring
-async function setFolderButton() {
-  const b = $("btn-folder");
-  const n = files.folderName();
-  b.textContent = n ?? (files.canPickFolder() ? "Pick folder" : "Downloads");
-  b.classList.toggle("set", !!n);
-  b.title = n ? `Files go to ${n}/<box name>/ - click to change` :
-    files.canPickFolder() ? "Pick the folder boxes and LightBurn files are written to (e.g. C:\\Projects\\Laser lightburn)"
-      : "This browser can't write to a folder: files are downloaded. In Brave, enable brave://flags/#file-system-access-api";
+// ------------------------------------------------------------------ the File menu
+let canHome = false;     // serve.py reads and writes beside a box's own file: Save as…, Windows' Open dialog
+
+function newDefault() {
+  const first = S.generator === FIRST_BOX.generator;
+  return newBox(S.generator, first ? FIRST_BOX.name : undefined, first ? FIRST_BOX.params : {});
 }
+
+/** A box from the Recent list: one with a file of its own is read from there, as it may have changed since. */
+async function openRecent(r: ReturnType<typeof cfg.recent>[number]) {
+  if (r.home && canHome) {
+    // boxes saved before 2026-11-07 were .box.json; renamed to .sbox since
+    const sbox = r.home.replace(/\.box\.json$/i, files.BOX_EXT);
+    if (sbox !== r.home && (await files.readHome(sbox)).ok && (await openHome(sbox))) return;
+    if (await openHome(r.home)) return;
+  }
+  await load(r.config);
+}
+
+async function chooseFolder() {
+  if (await pickFolder()) toast(`Files now go to ${files.folderName()}/<box name>/`);
+}
+
+function fileMenu(): MenuItem[] {
+  const recent = cfg.recent();
+  const folder = files.folderName();
+  const saveAsItem: MenuItem[] = canHome
+    ? [{ label: "Save as…", detail: "Ctrl+Shift+S", title: "Save the box somewhere else: it keeps its files beside it", run: saveAs }]
+    : [];
+  const recentItems: MenuItem[] = recent.length
+    ? recent.map((r) => ({
+      label: r.name, detail: `${r.generator}${r.saved ? " · " + new Date(r.saved).toLocaleDateString() : ""}`,
+      title: r.home ?? "", run: () => void openRecent(r),
+    }))
+    : [{ note: "No saved boxes yet" }];
+  const folderItem: MenuItem = files.canPickFolder()
+    ? { label: folder ? `Folder: ${folder}` : "Pick folder…", detail: folder ? "change…" : "",
+        title: "The folder boxes and LightBurn files are written to (e.g. C:\\Projects\\Laser lightburn): <folder>/<box name>/",
+        run: () => void chooseFolder() }
+    : { note: "Files are downloaded: this browser can't write into a folder (in Brave: brave://flags/#file-system-access-api)" };
+  return [
+    { label: "New", title: "Start over with this box type's defaults", run: () => void newDefault() },
+    { label: "Open…", detail: "Ctrl+O", title: "Open a box (.sbox)", run: () => void openBox() },
+    ...saveAsItem,
+    { label: "Copy share link", title: "Copy a link with the whole box in it", run: () => void share() },
+    { heading: "Export" },
+    { label: "LightBurn file only", detail: ".lbrn2", title: "Write the LightBurn project (a page per sheet) without opening LightBurn",
+      run: () => void exportFiles("lbrn2") },
+    { label: "SVGs, one per sheet", detail: ".svg", title: "Write one .svg per sheet", run: () => void exportFiles("svg") },
+    { heading: "Recent" },
+    ...recentItems,
+    { sep: true },
+    folderItem,
+  ];
+}
+
+// ------------------------------------------------------------------ wiring
 
 /** Let the user pick the output folder; loads its materials.json. False when cancelled. */
 async function pickFolder(): Promise<boolean> {
@@ -935,7 +970,7 @@ async function pickFolder(): Promise<boolean> {
     await loadMaterialsFromFolder();
     renderMaterial();
   }
-  setFolderButton();
+  showHome();
   return ok;
 }
 
@@ -968,39 +1003,10 @@ function wire() {
     S.name = name.value.trim() || S.generator.toLowerCase();
     S.dirty = true;
   };
-  $("btn-new").onclick = () => newBox(S.generator, S.generator === FIRST_BOX.generator ? FIRST_BOX.name : undefined,
-    S.generator === FIRST_BOX.generator ? FIRST_BOX.params : {});
-  $("btn-open").onclick = openBox;
+  $("btn-file").onclick = () => menu($("btn-file"), fileMenu());
   $("btn-save").onclick = saveBox;
-  $("btn-save-as").onclick = saveAs;
-  files.canUseHome().then((ok) => ($("btn-save-as").hidden = !ok));
-  $("btn-share").onclick = share;
-  $("btn-recent").onclick = (e) => {
-    e.stopPropagation();
-    menu($("btn-recent"), cfg.recent().map((r) => ({
-      label: `${r.name} · ${r.generator} · ${r.saved ? new Date(r.saved).toLocaleDateString() : ""}`,
-      run: async () => {
-        // a box with a file of its own is read from there: it may have changed since
-        if (r.home && (await files.canUseHome())) {
-          // boxes saved before 2026-11-07 were .box.json; renamed to .sbox since
-          const sbox = r.home.replace(/\.box\.json$/i, files.BOX_EXT);
-          if (sbox !== r.home && (await files.readHome(sbox)).ok && (await openHome(sbox))) return;
-          if (await openHome(r.home)) return;
-        }
-        await load(r.config);
-      },
-    })), "No saved boxes yet");
-  };
-  $("btn-folder").onclick = async () => {
-    if (!files.canPickFolder()) {
-      toast("This browser can't write into a folder, so files are downloaded.\nIn Brave: enable brave://flags/#file-system-access-api (or use Chrome/Edge).", false, 9000);
-      return;
-    }
-    if (await pickFolder()) toast(`Files now go to ${files.folderName()}/<box name>/`);
-  };
+  files.canUseHome().then((ok) => (canHome = ok));
   $("btn-open-lbrn").onclick = () => exportFiles("lbrn2", true);
-  $("btn-lbrn").onclick = () => exportFiles("lbrn2");
-  $("btn-svg").onclick = () => exportFiles("svg");
   $("btn-repack").onclick = () => {
     S.manual.clear();
     S.placements = [];
@@ -1015,6 +1021,11 @@ function wire() {
     if (ctrl && k === "s") {
       e.preventDefault();
       (e.shiftKey ? saveAs : saveBox)();
+      return;
+    }
+    if (ctrl && k === "o" && !e.shiftKey) {
+      e.preventDefault();
+      openBox();
       return;
     }
     const typing = (e.target as HTMLElement).closest("input, textarea, select");
@@ -1067,7 +1078,7 @@ async function main() {
   S.boxesVersion = cat.boxes_version;
   await files.restoreFolder();
   wire();
-  setFolderButton();
+  showHome();
   if (files.folderName()) loadMaterialsFromFolder().then(renderMaterial).catch(() => {});
   tab("box");
   if (!(await openFromHash())) await newBox(FIRST_BOX.generator, FIRST_BOX.name, FIRST_BOX.params);
