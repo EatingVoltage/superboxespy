@@ -193,15 +193,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .notice.bad { background: #2b161c; border-color: #6b2a38; color: #ffb3c1; }
 .notice button { margin-top: 6px; }
 
-/* ---------- tabs */
-.tabs { display: flex; align-items: center; gap: 2px; padding: 6px 12px 0; border-bottom: 1px solid var(--line); background: var(--panel); }
-.tabs [role=tab] {
-  border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent;
-  padding: 7px 14px; color: var(--muted);
-}
-.tabs [role=tab][aria-selected=true] { color: var(--text); border-bottom-color: var(--accent); }
-.tab-tools { display: flex; gap: 4px; padding-bottom: 6px; }
-.tab-tools[hidden] { display: none; }
+/* ---------- the work area: the box (2D | 3D) or the calibration */
 .panes { flex: 1; min-height: 0; position: relative; }
 .pane { position: absolute; inset: 0; display: flex; flex-direction: column; }
 .pane[hidden] { display: none; }
@@ -256,6 +248,21 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
   .split { flex-direction: column; }
   .divider { width: auto; height: 6px; cursor: row-resize; }
 }
+
+/* ---------- toolbars: one on top of each view, its tools for what's shown (src/ui.ts) */
+.toolbar { display: flex; align-items: center; gap: 4px; padding: 6px 12px; min-height: 41px; flex: none;
+  border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+.toolbar .tb-label { color: var(--muted); margin: 0 4px 0 2px; }
+.toolbar .tb-gap { width: 10px; }
+.toolbar .seg { display: inline-flex; }
+.toolbar .zoom-btn { width: 30px; padding-left: 0; padding-right: 0; }
+.help-btn { width: 28px; height: 28px; padding: 0; border-radius: 50%; color: var(--muted); font-weight: 600; }
+.help-btn:hover, .help-btn[aria-expanded=true] { color: var(--text); }
+button.toggle[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
+.calib-head { gap: 12px; }
+.calib-head .hint { font-size: 12px; }
+.calib-row { margin-top: -2px; }
+.calib-row button { padding: 3px 10px; }
 
 .inspector {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

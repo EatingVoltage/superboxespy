@@ -156,8 +156,13 @@ export class FaceEditor {
   setActive(on: boolean) {
     this.active = on;
     this.tabs.hidden = !on;
-    if (!on) this.closeLibrary();
-    this.showFace(on && this.tab !== "sheets");
+    if (on) {
+      this.showFace(this.tab !== "sheets");
+      return;
+    }
+    // switched off: hide what's ours and leave the 2D half to the stamp case's editor
+    this.closeLibrary();
+    this.root.hidden = this.bar.hidden = true;
   }
 
   /** The face shown, or null on Sheets. */

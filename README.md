@@ -28,8 +28,9 @@ Without a folder, files are downloaded instead (several as a zip).
 
 The burn (kerf correction) for 3.6 poplar has never been measured. The app says **unconfirmed** in red until it has.
 
-1. **Calibration tab → Get 00a kerf test.** Two strips of ten 10 mm bars, one along X and one along Y. About a
-   minute of cutting.
+1. **Calibrate…** (side panel, under the material) **→ Get 00a kerf test.** Two strips of ten 10 mm bars, one along
+   X and one along Y. About a minute of cutting. The calibration fills the work area; **← Back to the box** or Esc
+   returns.
 2. Push each strip's 10 bars tightly together, end to end, and measure the total length with calipers. Measure the
    sheet thickness in three spots. Enter all three and press **Save measurements**. kerf = (100 − length) / 10.
 3. **Get 00b fit comb.** Six values, one step more on the tight side. Each value has three plates: **A** fingers,
@@ -59,14 +60,17 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   `50*3:30`. TrayLayout's wall grid is the text box: delete a `-` or `|` to remove a wall, put an `X` in a cell to
   drop its floor. Changing sizes keeps your wall edits; changing the number of columns or rows starts a new grid.
 - **Advanced** holds boxes.py's finger-joint, hinge and lid settings.
-- **Sheets & 3D tab:** the sheets on the left, the 3D on the right, both following a slider while you drag it.
+- **The work area:** the 2D on the left, the 3D on the right, both following a slider while you drag it.
   Drag the divider (or focus it and use the arrow keys) to share the space; it's remembered. Double-click empty
-  space on the sheets, or the 3D, to let that side fill the view; double-click again to split.
+  space on the sheets, or the 3D, to let that side fill the view; double-click again to split. The 2D has one row of
+  tabs (**Sheets**, then a tab per face, or per board for the stamp case), and under it a toolbar with the tools
+  for what's shown.
 - **Sheets:** parts are packed from the lower left, so what's left is mostly one clean piece across the top. Drag
   parts to rearrange them, including onto another sheet.
   **R** rotates, the arrow keys nudge (Shift = 10 mm), PgUp/PgDn moves a part to another sheet. Anything closer than
   1.5 mm to another part or 3 mm to the edge, or above the 390 mm reach line, turns red and blocks the export.
-  **Re-pack** forgets your arrangement. Hand-placed parts stay put when you change sliders, as long as they still fit.
+  **Re-pack** (the sheets' toolbar, beside **− / +** zoom) forgets your arrangement. Hand-placed parts stay put when
+  you change sliders, as long as they still fit.
 - **Rest pieces:** the rest wood is cut free as rectangles once the parts are done (on by default; **Cut the rest
   pieces free** under Engraving & notes). The sheets show each piece with its size and the dashed magenta cuts that
   free it, and follow while you drag. The cuts carry the parts' own edges out to the sheet's edges: the full width

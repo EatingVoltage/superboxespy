@@ -8,7 +8,7 @@ import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import * as sc from "./stampcase";
 import { FaceEditor, type Faces } from "./faceeditor";
-import { menu, type MenuItem } from "./ui";
+import { btn, fillToolbar, menu, type MenuItem } from "./ui";
 import { A3 } from "./types";
 import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
@@ -135,7 +135,7 @@ function renderMaterial() {
   const burnText = m.burn_x != null ? `X ${f3(m.burn_x)} · Y ${f3(m.burn_y!)} mm` : `${f3(m.burn)} mm`;
   el.append(h("div", { class: "readout" }, h("span", {}, "Thickness ", h("b", {}, `${m.thickness} mm`)),
     h("span", { title: m.burn_x != null ? "Per-axis kerf compensation: your spot cuts wider in one axis" : "" },
-      "Burn ", h("b", {}, burnText), " ", chip)));
+      "Burn ", h("b", {}, burnText), " ", chip)), calibrateRow());
   if (S.compOverride || S.thicknessOverride != null) {
     const use = h("button", {}, "Use the material profile instead");
     use.onclick = () => {
@@ -145,10 +145,14 @@ function renderMaterial() {
     };
     el.append(h("div", { class: "notice" }, "This box was saved with other material values than your current profile. ", use));
   } else if (m.status === "default") {
-    const go = h("button", {}, "Open calibration");
-    go.onclick = () => tab("calib");
-    el.append(h("div", { class: "notice" }, "Burn 0.10 is boxes.py's default, never measured on your Falcon2. Cut the calibration sheets before cutting boxes you care about. ", go));
+    el.append(h("div", { class: "notice" }, "Burn 0.10 is boxes.py's default, never measured on your Falcon2. Cut the calibration sheets (Calibrate…) before cutting boxes you care about."));
   }
+}
+
+/** Calibration opens from here: it fills the work area until Back. */
+function calibrateRow() {
+  return h("div", { class: "row calib-row" },
+    btn("Calibrate…", "Cut and measure the kerf test and the fit comb for this material", () => tab("calib")));
 }
 
 /** A stamp case has no press or glue fit (the 1 mm of air around each stamp is the fit): kerf / 2 per axis. */
@@ -157,7 +161,8 @@ function renderStampMaterial(el: HTMLElement, thickness: number) {
   const kt = k ? `X ${f3(k.x)} · Y ${f3(k.y)} mm` : "not measured";
   el.append(h("div", { class: "readout" }, h("span", {}, "Thickness ", h("b", {}, `${thickness} mm`)),
     h("span", { title: "Outlines and pockets get half the kerf per axis; magnet holes are drawn as they are" }, "Kerf ", h("b", {}, kt), " ",
-      h("span", { class: `chip-status ${S.kerfOverride ? "kerf" : k ? "measured" : "default"}` }, S.kerfOverride ? "from file" : k ? "measured" : "unconfirmed"))));
+      h("span", { class: `chip-status ${S.kerfOverride ? "kerf" : k ? "measured" : "default"}` }, S.kerfOverride ? "from file" : k ? "measured" : "unconfirmed"))),
+    calibrateRow());
   if (S.kerfOverride || S.thicknessOverride != null) {
     const use = h("button", {}, "Use the material profile instead");
     use.onclick = () => {
@@ -167,9 +172,7 @@ function renderStampMaterial(el: HTMLElement, thickness: number) {
     };
     el.append(h("div", { class: "notice" }, "This case was saved with other material values than your current profile. ", use));
   } else if (!k) {
-    const go = h("button", {}, "Open calibration");
-    go.onclick = () => tab("calib");
-    el.append(h("div", { class: "notice" }, "The kerf of this material hasn't been measured: cut the 00a kerf test first. Until then the case uses 0.33 / 0.26. ", go));
+    el.append(h("div", { class: "notice" }, "The kerf of this material hasn't been measured: cut the 00a kerf test first (Calibrate…). Until then the case uses 0.33 / 0.26."));
   }
 }
 
@@ -423,9 +426,8 @@ const stampHost: sc.StampHost = {
   },
   toast,
   showSheets(on) {
-    $("sheets").hidden = !on;
+    $("sheets").hidden = $("sheet-tools").hidden = !on;
     if (!on) $("inspector").hidden = true;
-    document.querySelectorAll<HTMLElement>('.tab-tools[data-for="box"] button').forEach((b) => (b.hidden = !on));
     if (on) sheetView.fit();
   },
 };
@@ -544,8 +546,8 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
   S.fileVersion = isStamp() ? null : c.boxes_version ?? null;   // boxes.py doesn't make stamp cases
   S.dirty = false;
   editor.selected.clear();
+  faceEditor.setActive(!isStamp());     // the one switched off lets go of the 2D half; the one on decides what shows
   editor.setActive(isStamp());
-  faceEditor.setActive(!isStamp());
   resetHistory();
   setGenLabel();
   ($("name") as HTMLInputElement).value = S.name;
@@ -789,15 +791,31 @@ async function show3D() {
   view3d!.update(S.build!, S.generator, material(), buildIsDraft);
 }
 
-function tab(name: string) {
-  document.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach((b) => b.setAttribute("aria-selected", String(b.dataset.tab === name)));
+/** The work area: the box (2D | 3D), or the calibration, which opens from the Material section until Back. */
+function tab(name: "box" | "calib") {
   document.querySelectorAll<HTMLElement>(".pane").forEach((p) => (p.hidden = p.dataset.pane !== name));
-  document.querySelectorAll<HTMLElement>(".tab-tools").forEach((t) => (t.hidden = t.dataset.for !== name));
   if (name === "box") {
     sheetView.fit();
     show3D();
+  } else {
+    renderCalib();
+    $("calib-back").focus({ preventScroll: true });
   }
-  if (name === "calib") renderCalib();
+}
+
+/** The sheets' toolbar. */
+function renderSheetTools() {
+  const zoom = (k: number) =>
+    sheetView.setZoom(Number(getComputedStyle(document.documentElement).getPropertyValue("--sheet-zoom") || 1) * k);
+  fillToolbar($("sheet-tools"), [
+    btn("Re-pack", "Forget hand-placed parts and pack again", () => {
+      S.manual.clear();
+      S.placements = [];
+      changed(true);
+    }),
+    btn("−", "Zoom out (Ctrl+wheel)", () => zoom(1 / 1.2), "zoom-btn"),
+    btn("+", "Zoom in (Ctrl+wheel)", () => zoom(1.2), "zoom-btn"),
+  ]);
 }
 
 const SPLIT_KEY = "superboxes.split";
@@ -1007,14 +1025,8 @@ function wire() {
   $("btn-save").onclick = saveBox;
   files.canUseHome().then((ok) => (canHome = ok));
   $("btn-open-lbrn").onclick = () => exportFiles("lbrn2", true);
-  $("btn-repack").onclick = () => {
-    S.manual.clear();
-    S.placements = [];
-    changed(true);
-  };
-  $("btn-zoom-in").onclick = () => sheetView.setZoom(Number(getComputedStyle(document.documentElement).getPropertyValue("--sheet-zoom") || 1) * 1.2);
-  $("btn-zoom-out").onclick = () => sheetView.setZoom(Number(getComputedStyle(document.documentElement).getPropertyValue("--sheet-zoom") || 1) / 1.2);
-  document.querySelectorAll<HTMLButtonElement>("[role=tab]").forEach((b) => (b.onclick = () => tab(b.dataset.tab!)));
+  renderSheetTools();
+  $("calib-back").onclick = () => tab("box");
   document.addEventListener("keydown", (e) => {
     const ctrl = e.ctrlKey || e.metaKey;
     const k = e.key.toLowerCase();
@@ -1030,6 +1042,10 @@ function wire() {
     }
     const typing = (e.target as HTMLElement).closest("input, textarea, select");
     if (typing) return;                          // text fields keep their own keys, undo included
+    if (!$("calib").closest<HTMLElement>(".pane")!.hidden) {
+      if (e.key === "Escape") tab("box");          // the calibration's keys: Esc goes back to the box
+      return;
+    }
     if (ctrl && (k === "z" || k === "y")) {
       e.preventDefault();
       (k === "y" || e.shiftKey ? redo : undo)();

@@ -28,27 +28,19 @@
     </aside>
 
     <section class="stage">
-      <nav class="tabs" role="tablist">
-        <button role="tab" data-tab="box" aria-selected="true">Sheets &amp; 3D</button>
-        <button role="tab" data-tab="calib" aria-selected="false">Calibration</button>
-        <div class="spacer"></div>
-        <div class="tab-tools" data-for="box">
-          <button id="btn-repack" title="Forget hand-placed parts and pack again">Re-pack</button>
-          <button id="btn-zoom-out" title="Zoom out (Ctrl+wheel)">−</button>
-          <button id="btn-zoom-in" title="Zoom in (Ctrl+wheel)">+</button>
-        </div>
-      </nav>
       <div class="panes">
         <div class="pane" data-pane="box">
           <div id="split" class="split">
-            <div class="half half-sheets" title="Double-click empty space to fill the view with the sheets">
+            <div class="half half-sheets">
+              <!-- the tabs, then the toolbar of what's shown, the drawing, and under it the selection's bar -->
               <nav id="board-tabs" class="board-tabs" role="tablist" aria-label="Stamp case boards" hidden></nav>
-              <div id="board" class="board" hidden></div>
-              <div id="board-bar" class="inspector board-bar" hidden></div>
               <nav id="face-tabs" class="board-tabs" role="tablist" aria-label="Box faces" hidden></nav>
+              <div id="sheet-tools" class="toolbar" role="toolbar" aria-label="Sheets"></div>
+              <div id="board" class="board" hidden></div>
               <div id="face" class="board" hidden></div>
+              <div id="sheets" class="sheets" title="Double-click empty space to fill the view with the sheets"></div>
+              <div id="board-bar" class="inspector board-bar" hidden></div>
               <div id="face-bar" class="inspector board-bar" hidden></div>
-              <div id="sheets" class="sheets"></div>
               <div id="inspector" class="inspector" hidden></div>
             </div>
             <div id="divider" class="divider" role="separator" aria-orientation="vertical" aria-label="Sheets | 3D"
@@ -60,6 +52,9 @@
           </div>
         </div>
         <div class="pane" data-pane="calib" hidden>
+          <div class="toolbar calib-head">
+            <button id="calib-back" type="button" title="Back to the sheets and the 3D (Esc)">← Back to the box</button>
+          </div>
           <div id="calib" class="calib"></div>
         </div>
       </div>

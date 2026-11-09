@@ -301,8 +301,7 @@ export class BoardEditor {
     this.tabs.hidden = !on;
     this.root.hidden = !on || this.tab === "sheets";
     this.bar.hidden = !on || this.tab === "sheets";
-    if (!on) this.host.showSheets(true);
-    else this.host.showSheets(this.tab === "sheets");
+    if (on) this.host.showSheets(this.tab === "sheets");     // off: the face editor decides what shows
   }
 
   private data(): StampData | null {
@@ -352,7 +351,7 @@ export class BoardEditor {
     const d = this.data();
     if (!d) return;
     this.tabs.replaceChildren();
-    for (const [key, title] of [...d.boards.map((b) => [b.key, b.title] as const), ["sheets", "Sheets"] as const]) {
+    for (const [key, title] of [["sheets", "Sheets"] as const, ...d.boards.map((b) => [b.key, b.title] as const)]) {
       const b = h("button", { role: "tab", "aria-selected": this.tab === key }, title);
       b.onclick = () => this.setTab(key);
       this.tabs.append(b);
