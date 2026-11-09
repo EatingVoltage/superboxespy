@@ -98,7 +98,8 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   overlap by more than touching turn red, with red dots where they do. "✓ no parts overlap" means every finger sits
   in its slot. While you drag, the maker's mark stays where it was and the check waits until you let go.
 - **Maker's mark** `SG` + month + year of the cut (`SG1026`) goes on the bottom face of the closed box (or a bottom
-  part when the box has no assembly), on the LINE layer, never on a lid, and out of the way of what you put there.
+  part when the box has no assembly), in eV Sans Bold at 3 mm capitals, its outlines on the LINE layer (as on the
+  stamp case), never on a lid, and out of the way of what you put there.
   **Mark here** in the part bar under the sheets moves it to the selected part.
   **Engrave part labels** is off by default: labels then only sit on T1 (shown in LightBurn, never cut).
 - **Text, logos and SVG on the faces** (the face editor: `.grill/face-editor.md`). Beside **Sheets** there's a tab
@@ -328,5 +329,5 @@ superboxes © 2026 eatingVoltage. Free software under the GNU GPL, version 3 or 
 because boxes.py (© Florian Festi and contributors) is GPLv3. No warranty. Bundled: Pyodide (MPL-2.0), numpy,
 shapely (BSD), affine (BSD), qrcode (BSD, `python/_vendor/qrcode/LICENSE`), three.js (MIT), JSZip (MIT).
 
-The headings use LEMON MILK (MARSNEV) when `public/fonts/LEMONMILK-Medium.otf` exists. Its licence doesn't allow
-passing the font on, so it isn't in this repo; without it the headings use your system font.
+The interface and every engraved text are set in eV Sans, the eatingVoltage font (SIL Open Font License 1.1,
+`python/superboxes/stampcase/fonts/`, with its `OFL.txt` and `FONTLOG.txt`); the web build bundles the same files.

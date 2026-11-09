@@ -17,9 +17,11 @@ from evlaser import geom as G, lbrn, machine as M
 from . import kerf
 from . import sheets as S
 from . import strokefont
+from .stampcase import config as SC, shapes as SS
 
 LABEL_H = 2.5          # cap height of part labels, mm
 MARK_H = 3.0           # cap height of the maker's mark, mm
+MARK_FONT = SC.FONT_BOLD   # the mark in eV Sans Bold, its outlines on LINE: as on the stamp case (eVlaser)
 
 
 def mark_text(when=None):
@@ -42,6 +44,17 @@ def label_lines(p):
     return MultiLineString([ls for m in out for ls in m.geoms]) if out else None
 
 
+def mark_width(text, h):
+    return SS.text_width(text, h, MARK_FONT)
+
+
+def mark_lines(text, x, y, h):
+    """The maker's mark as engraved: eV Sans Bold outlines, cap height h, its lower-left corner at (x, y)."""
+    g = SS.text(text, x + mark_width(text, h) / 2, y + h / 2, h, MARK_FONT)
+    polys = getattr(g, "geoms", [g])
+    return MultiLineString([list(r.coords) for p in polys if not p.is_empty for r in (p.exterior, *p.interiors)])
+
+
 def mark_spot(p, text, thickness, height=MARK_H, avoid=None):
     """Lower-left corner for `text` on part p: inside the part, clear of holes, finger zones (thickness + 1.5 mm
     from every edge) and `avoid` (the face editor's items, part coordinates), nearest to the middle. None when there's
@@ -49,7 +62,7 @@ def mark_spot(p, text, thickness, height=MARK_H, avoid=None):
     if p.shape is None or p.shape.is_empty:
         return None
     for h in (height, 2.0):
-        w = strokefont.width(text, h)
+        w = mark_width(text, h)
         inner = p.shape.buffer(-(thickness + 1.5))
         if avoid is not None and not avoid.is_empty:
             inner = inner.difference(avoid.buffer(2.0))
@@ -115,17 +128,17 @@ def decorations(parts, opts, thickness, box=None, draft=False, avoid=None, defau
             idx = default_part if default_part is not None else bottom_part(parts)
         if draft:
             spot = _last_spot.get((box, idx, text))
-            if spot and (spot[0] + strokefont.width(text, spot[2]) > parts[idx].w or spot[1] + spot[2] > parts[idx].h):
+            if spot and (spot[0] + mark_width(text, spot[2]) > parts[idx].w or spot[1] + spot[2] > parts[idx].h):
                 spot = None
             if spot:
-                deco.setdefault(idx, []).append((M.LINE, strokefont.text(text, *spot)))
+                deco.setdefault(idx, []).append((M.LINE, mark_lines(text, *spot)))
             return deco, warnings
         spot = mark_spot(parts[idx], text, thickness, avoid=avoid.get(idx))
         _last_spot.clear()
         _last_spot[(box, idx, text)] = spot
         if spot:
             x, y, h = spot
-            deco.setdefault(idx, []).append((M.LINE, strokefont.text(text, x, y, h)))
+            deco.setdefault(idx, []).append((M.LINE, mark_lines(text, x, y, h)))
         else:
             warnings.append("No room for the maker's mark %s on %s - pick another part." % (text, parts[idx].name))
     return deco, warnings

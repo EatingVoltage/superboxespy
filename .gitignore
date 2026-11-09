@@ -6,5 +6,5 @@ __pycache__/
 public/pyodide/
 public/py.zip
 python/boxes.old/
-# LEMON MILK may not be redistributed: local only. Without it the headings fall back to system-ui.
+# local fonts, never committed (LEMON MILK may not be redistributed); the app no longer uses them: its UI is eV Sans
 public/fonts/

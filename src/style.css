@@ -1,8 +1,15 @@
-/* Local only: public/fonts/ is gitignored (LEMON MILK may not be redistributed). Missing, it falls back to system-ui. */
+/* eV Sans, the eatingVoltage font (OFL 1.1, with its OFL.txt beside the files): the whole interface, the same files
+   the engraving uses (python/superboxes/stampcase/fonts), bundled by Vite. */
 @font-face {
-  font-family: "Lemon Milk";
-  src: url("/fonts/LEMONMILK-Medium.otf") format("opentype");
-  font-weight: 500;
+  font-family: "eV Sans";
+  src: url("../python/superboxes/stampcase/fonts/eVSans-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "eV Sans";
+  src: url("../python/superboxes/stampcase/fonts/eVSans-Bold.ttf") format("truetype");
+  font-weight: 700;
   font-display: swap;
 }
 
@@ -25,6 +32,7 @@
   --ply-dark: #d9c39b;
   --part: #f3e6cc;
   --radius: 8px;
+  --ui: "eV Sans", system-ui, "Segoe UI", sans-serif;
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
   --sheet-zoom: 1;
   color-scheme: dark;
@@ -37,7 +45,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 13px/1.4 system-ui, "Segoe UI", sans-serif;
+  font: 14px/1.4 var(--ui);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -80,13 +88,15 @@ textarea.mono, .mono { font-family: var(--mono); font-size: 12px; }
   flex-wrap: wrap;
 }
 .brand {
-  font-family: "Lemon Milk", system-ui, sans-serif;
-  font-size: 17px;
-  letter-spacing: 0.04em;
+  font-family: var(--ui);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--accent);
   margin-right: 6px;
 }
-.brand span { color: var(--muted); font-size: 12px; }
+.brand span { color: var(--muted); font-size: 13px; text-transform: none; }
 /* the type button and the name give way first, so the bar stays one line in the 1500 px app window */
 .gen-btn { flex: 1 1 220px; max-width: 300px; min-width: 180px; display: flex; align-items: center; gap: 8px; justify-content: space-between; }
 .gen-btn b { font-weight: 600; }
@@ -136,8 +146,8 @@ main { flex: 1; display: flex; min-height: 0; }
 .group { padding: 10px 14px 6px; border-bottom: 1px solid var(--line); }
 .group h3 {
   margin: 4px 0 10px;
-  font-family: "Lemon Milk", system-ui, sans-serif;
-  font-weight: 500;
+  font-family: var(--ui);
+  font-weight: 700;
   font-size: 11px;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -170,6 +180,7 @@ main { flex: 1; display: flex; min-height: 0; }
 .row label { color: var(--text); }
 .num-wrap { display: flex; align-items: center; gap: 4px; }
 .num { width: 78px; text-align: right; }
+.num, .readout, .chip, .status, .messages, .menu-detail, .home, .inspector, .board-bar { font-variant-numeric: tabular-nums; }
 .unit { color: var(--muted); font-size: 11px; min-width: 22px; }
 input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .sel-row select { width: 100%; margin-top: 4px; }
@@ -240,7 +251,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .board-bar .seg button[aria-pressed=true] { background: var(--accent); color: var(--accent-ink); }
 .rest-piece { fill: #ffffff; opacity: .12; }
 .frame-cut { stroke: #d633d6; stroke-width: 1px; vector-effect: non-scaling-stroke; stroke-dasharray: 4 3; }
-.rest-label { fill: #7a6c52; font: 600 8px system-ui, sans-serif; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
+.rest-label { fill: #7a6c52; font: 700 8px var(--ui); font-variant-numeric: tabular-nums; text-anchor: middle; dominant-baseline: middle; pointer-events: none; }
 .part { cursor: grab; }
 .part:active { cursor: grabbing; }
 .part .body { fill: var(--part); stroke: none; }
@@ -381,17 +392,17 @@ button.toggle[aria-pressed=true] { border-color: var(--accent); color: var(--acc
 .dim-toggle input { accent-color: var(--accent); margin: 0; }
 .dim-layer { position: absolute; inset: 0; pointer-events: none; }
 .dim {
-  font: 600 12px/1 var(--mono); color: var(--accent); white-space: nowrap;
+  font: 700 12px/1 var(--ui); font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap;
   background: rgba(18, 20, 23, .82); border: 1px solid #6b5320; border-radius: 4px; padding: 3px 6px;
 }
 .dim span { color: var(--muted); font-weight: 400; }
-.dim-cell { font: 11px/1 var(--mono); color: #d8c7a3; white-space: nowrap; background: rgba(18, 20, 23, .6); border-radius: 3px; padding: 2px 4px; }
+.dim-cell { font: 11px/1 var(--ui); font-variant-numeric: tabular-nums; color: #d8c7a3; white-space: nowrap; background: rgba(18, 20, 23, .6); border-radius: 3px; padding: 2px 4px; }
 .clash { color: var(--bad); font-weight: 600; }
 .noclash { color: var(--ok); }
 
 /* ---------- calibration */
 .calib { flex: 1; overflow: auto; padding: 18px 22px 40px; display: grid; grid-template-columns: minmax(300px, 520px) minmax(300px, 1fr); gap: 22px; align-content: start; }
-.calib h2 { font-family: "Lemon Milk", system-ui, sans-serif; font-weight: 500; font-size: 14px; letter-spacing: .08em; margin: 0 0 4px; color: var(--accent); }
+.calib h2 { font-family: var(--ui); font-weight: 700; font-size: 15px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 4px; color: var(--accent); }
 .calib .step { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 14px; }
 .calib .step h4 { margin: 0 0 6px; font-size: 13px; }
 .calib .step p { margin: 4px 0 10px; color: var(--muted); }
