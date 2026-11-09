@@ -59,7 +59,13 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   Compartment lists (TypeTray `sx`/`sy`, HobbyCase) are edited as chips: `+` adds one, `×` removes one, or type
   `50*3:30`. TrayLayout's wall grid is the text box: delete a `-` or `|` to remove a wall, put an `X` in a cell to
   drop its floor. Changing sizes keeps your wall edits; changing the number of columns or rows starts a new grid.
-- **Advanced** holds boxes.py's finger-joint, hinge and lid settings.
+- **The side panel**, top to bottom: the material (one line once it's measured: click it for the material, the fit
+  and **Calibrate…**; it stays open while unconfirmed or when a box file brought other values), the box's own
+  settings, **Mark & notes**, and **Advanced** (closed until opened): Cutting (holding tabs, inner corners) and
+  boxes.py's finger-joint, hinge and lid settings.
+- **Controls:** a switch is an on/off saved with the box (side panel); a segmented control picks one of a few
+  (Press fit | Glue fit, Outside | Inside, Outline | Hatched); in toolbars and bars an on/off for how something looks
+  (Dimensions, Bold) is a button, lit amber while on.
 - **The work area:** the 2D on the left, the 3D on the right, both following a slider while you drag it.
   Drag the divider (or focus it and use the arrow keys) to share the space; it's remembered. Double-click empty
   space on the sheets, or the 3D, to let that side fill the view; double-click again to split. The 2D has one row of
@@ -72,7 +78,7 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   **Re-pack** (the sheets' toolbar, beside **− / +** zoom) forgets your arrangement. Hand-placed parts stay put when
   you change sliders, as long as they still fit.
 - **Rest pieces:** the rest wood is cut free as rectangles once the parts are done (on by default; **Cut the rest
-  pieces free** under Engraving & notes). The sheets show each piece with its size and the dashed magenta cuts that
+  pieces free** under Mark & notes). The sheets show each piece with its size and the dashed magenta cuts that
   free it, and follow while you drag. The cuts carry the parts' own edges out to the sheet's edges: the full width
   above the highest part (the **top rest piece**), then right of the parts, a piece per step in their right edge.
   A piece needs 10 mm both ways, and a cut never runs above the reach line. The pieces come off square, so where a

@@ -194,26 +194,35 @@ export function widget(p: Param, value: any, onChange: OnChange): HTMLElement {
   }
 }
 
-export function renderParams(el: HTMLElement, groups: Group[], values: Record<string, any>, onChange: OnChange,
-                             openAdvanced: Set<string>) {
+const CUTTING = "Default Settings";        // boxes.py's own group: holding tabs, inner corners
+const ADVANCED = "__advanced";             // openAdvanced's key for the Advanced section itself
+
+/** The box's own settings into `el` (Box first); Cutting and boxes.py's edge, hinge and lid groups into `adv`, one
+ *  Advanced section at the bottom of the side panel, closed until opened (.grill/ui-toolbars-menus.md). */
+export function renderParams(el: HTMLElement, adv: HTMLElement, groups: Group[], values: Record<string, any>,
+                             onChange: OnChange, openAdvanced: Set<string>) {
   el.replaceChildren();
-  const main = groups.filter((g) => !g.advanced);
-  const adv = groups.filter((g) => g.advanced);
+  adv.replaceChildren();
+  const main = groups.filter((g) => !g.advanced && g.title !== CUTTING);
+  const more = [...groups.filter((g) => g.title === CUTTING), ...groups.filter((g) => g.advanced)];
   for (const g of main) {
-    const sec = h("section", { class: "group" }, h("h3", {}, g.title === "Default Settings" ? "Cutting" : g.title));
+    const sec = h("section", { class: "group" }, h("h3", {}, g.title));
     g.params.forEach((p) => sec.append(widget(p, values[p.name] ?? p.default, onChange)));
     el.append(sec);
   }
-  if (adv.length) {
-    const sec = h("section", { class: "group advanced" }, h("h3", {}, "Advanced"));
-    for (const g of adv) {
-      const d = h("details", { open: openAdvanced.has(g.title) }, h("summary", {}, g.title)) as HTMLDetailsElement;
-      d.ontoggle = () => (d.open ? openAdvanced.add(g.title) : openAdvanced.delete(g.title));
-      g.params.forEach((p) => d.append(widget(p, values[p.name] ?? p.default, onChange)));
-      sec.append(d);
-    }
-    el.append(sec);
+  if (!more.length) return;
+  const names = more.map((g) => (g.title === CUTTING ? "cutting" : g.title.toLowerCase())).slice(0, 3).join(", ");
+  const outer = h("details", { class: "group advanced", open: openAdvanced.has(ADVANCED) },
+    h("summary", {}, h("h3", {}, "Advanced"), h("span", { class: "hint" }, `${names}${more.length > 3 ? ", …" : ""}`))) as HTMLDetailsElement;
+  outer.ontoggle = () => (outer.open ? openAdvanced.add(ADVANCED) : openAdvanced.delete(ADVANCED));
+  for (const g of more) {
+    const title = g.title === CUTTING ? "Cutting" : g.title;
+    const d = h("details", { open: openAdvanced.has(g.title) }, h("summary", {}, title)) as HTMLDetailsElement;
+    d.ontoggle = () => (d.open ? openAdvanced.add(g.title) : openAdvanced.delete(g.title));
+    g.params.forEach((p) => d.append(widget(p, values[p.name] ?? p.default, onChange)));
+    outer.append(d);
   }
+  adv.append(outer);
 }
 
 export { h };

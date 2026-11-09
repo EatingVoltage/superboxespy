@@ -146,6 +146,24 @@ main { flex: 1; display: flex; min-height: 0; }
 .group details { border-top: 1px solid var(--line); padding: 6px 0; }
 .group details summary { cursor: pointer; color: var(--muted); padding: 2px 0 6px; }
 .group details[open] summary { color: var(--text); }
+.group-head { display: flex; align-items: baseline; justify-content: space-between; }
+.fold-btn { padding: 0 8px; color: var(--muted); }
+/* Advanced: one closed section at the bottom of the side panel (src/params.ts) */
+.group.advanced > summary { display: flex; align-items: baseline; gap: 8px; cursor: pointer; list-style: none; padding: 0; }
+.group.advanced > summary::-webkit-details-marker { display: none; }
+.group.advanced > summary::before { content: "▸"; color: var(--muted); }
+.group.advanced[open] > summary::before { content: "▾"; }
+.group.advanced > summary h3 { margin: 4px 0 6px; }
+.group.advanced > summary .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.group.advanced:not([open]) { padding-bottom: 4px; }
+/* Material, folded to one line once measured */
+.group.material.folded { padding: 6px 8px; }
+.material-line { display: flex; align-items: center; gap: 6px; width: 100%; text-align: left; border-color: transparent;
+  background: transparent; padding: 6px; }
+.material-line:hover { background: var(--panel-2); }
+.material-line .material-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.material-line .material-what { color: var(--muted); white-space: nowrap; }
+.material-line .fold-mark { margin-left: auto; color: var(--muted); }
 
 .row { margin: 0 0 12px; display: block; }
 .row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }

@@ -100,11 +100,42 @@ function kerf(): { x: number; y: number } | null {
   return { x: p.kerfX ?? p.kerfY!, y: p.kerfY ?? p.kerfX! };
 }
 
+let materialOpen = false;      // the Material section unfolded: it folds to one line once the material is measured
+
+/** Material & fit. Measured (and no box file's own values): one line that opens on a click. Unconfirmed, or a box
+ *  file with other values: open, with its notice. */
 function renderMaterial() {
   const el = $("material");
   const p = profile();
   const m = material();
-  el.replaceChildren(h("h3", {}, "Material & fit"));
+  const k = kerf();
+  const measured = isStamp() ? !!k && !S.kerfOverride && S.thicknessOverride == null
+    : m.status === "measured" && !S.compOverride && S.thicknessOverride == null;
+  const folded = measured && !materialOpen;
+  el.classList.toggle("folded", folded);
+  if (folded) {
+    const values = isStamp() ? `kerf X ${f3(k!.x)} · Y ${f3(k!.y)} mm`
+      : m.burn_x != null ? `burn X ${f3(m.burn_x)} · Y ${f3(m.burn_y!)} mm` : `burn ${f3(m.burn)} mm`;
+    const line = h("button", { type: "button", class: "material-line", "aria-expanded": "false",
+      title: `${p.label}, ${m.thickness} mm thick\n${values}\nClick for the material, the fit and Calibrate…` },
+      h("span", { class: "material-name" }, p.label.replace(/\s*\(.*\)\s*$/, "")),
+      h("span", { class: "material-what" }, isStamp() ? "· kerf" : `· ${S.fit} fit`),
+      h("span", { class: "chip-status measured" }, "measured"), h("span", { class: "fold-mark", "aria-hidden": "true" }, "▸"));
+    line.onclick = () => {
+      materialOpen = true;
+      renderMaterial();
+    };
+    el.replaceChildren(line);
+    return;
+  }
+  const head = h("div", { class: "group-head" }, h("h3", {}, "Material & fit"));
+  if (measured) {
+    head.append(btn("▴", "Fold to one line", () => {
+      materialOpen = false;
+      renderMaterial();
+    }, "fold-btn"));
+  }
+  el.replaceChildren(head);
   const sel = h("select", { "aria-label": "Material" }) as HTMLSelectElement;
   for (const q of mats.all()) sel.append(h("option", { value: q.key, selected: q.key === p.key }, q.label));
   sel.onchange = () => {
@@ -179,7 +210,7 @@ function renderStampMaterial(el: HTMLElement, thickness: number) {
 // ------------------------------------------------------------------ output options
 function renderOutput() {
   const el = $("output");
-  el.replaceChildren(h("h3", {}, isStamp() ? "Sheets & notes" : "Engraving & notes"));
+  el.replaceChildren(h("h3", {}, "Mark & notes"));
   const sw = (label: string, checked: boolean, on: (v: boolean) => void, title = "") => {
     const box = h("input", { type: "checkbox", checked, role: "switch" }) as HTMLInputElement;
     box.onchange = () => on(box.checked);
@@ -243,11 +274,12 @@ function defaults(groups: Group[]): Record<string, any> {
 function renderParamPanel() {
   if (isStamp()) {
     sc.renderPanel($("params"), stampHost, editor);
+    $("advanced").replaceChildren();
     return;
   }
   const groups = S.schemas.get(S.generator);
   if (!groups) return;
-  renderParams($("params"), groups, S.params, (name, value, final) => {
+  renderParams($("params"), $("advanced"), groups, S.params, (name, value, final) => {
     S.params[name] = value;
     changed(final);
   }, S.openAdvanced);
