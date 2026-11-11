@@ -156,6 +156,29 @@ export function toggle(label: string, title: string, on: boolean, set: (on: bool
   return b;
 }
 
+/** A field of `bar` the user types into. */
+const typingIn = (bar: HTMLElement, t: EventTarget | null) =>
+  t instanceof HTMLElement && bar.contains(t) && t.matches("textarea, input:not([type=checkbox], [type=radio], [type=range])");
+const held = new WeakSet<HTMLElement>();
+
+/** True while one of the bar's text fields has the focus: a redraw now (a build landing) would pull the field out
+ *  from under the user, and the keys meant for it would reach the editor (Backspace deletes the item). `redraw`
+ *  runs instead once the focus moves on to anything but another of the bar's fields; leaving the window keeps it. */
+export function holdWhileTyping(bar: HTMLElement, redraw: () => void): boolean {
+  if (!typingIn(bar, document.activeElement)) return false;
+  if (!held.has(bar)) {
+    held.add(bar);
+    const done = (e: FocusEvent) => {
+      if (typingIn(bar, e.relatedTarget) || !document.hasFocus()) return;
+      bar.removeEventListener("focusout", done);
+      held.delete(bar);
+      redraw();
+    };
+    bar.addEventListener("focusout", done);
+  }
+  return true;
+}
+
 /** A toolbar: its kids, a spacer, then what goes at the right end. */
 export function fillToolbar(el: HTMLElement, left: (Node | string)[], right: (Node | string)[] = []) {
   el.replaceChildren(...left, h("div", { class: "spacer" }), ...right);

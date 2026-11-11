@@ -15,7 +15,7 @@
 
 import { h } from "./params";
 import { call } from "./py";
-import { DRAG_PX, btn, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem } from "./ui";
+import { DRAG_PX, btn, fillToolbar, helpButton, helpCard, holdWhileTyping, menuButton, seg, toggle, type MenuItem } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -752,6 +752,7 @@ export class FaceEditor {
 
   // ---------------------------------------------------------------- the bar under the face: the selected item
   private renderBar() {
+    if (holdWhileTyping(this.bar, () => this.renderBar())) return;
     const f = this.info()[this.faceKey];
     const it = this.items().find((i) => i.id === this.selected);
     this.bar.hidden = this.root.hidden || !f || !it;

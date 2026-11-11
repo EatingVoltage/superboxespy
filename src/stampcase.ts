@@ -8,7 +8,7 @@
 
 import { h } from "./params";
 import { pathD } from "./sheetview";
-import { btn, fillToolbar, helpButton, helpCard } from "./ui";
+import { btn, fillToolbar, helpButton, helpCard, holdWhileTyping } from "./ui";
 import type { Block, BlockKey, Build, Case, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -487,6 +487,7 @@ export class BoardEditor {
 
   // ---------------------------------------------------------------- the bar under the editor: the selection
   private renderBar() {
+    if (holdWhileTyping(this.bar, () => this.renderBar())) return;
     const d = this.data();
     const c = this.host.params();
     this.bar.hidden = !d || this.tab === "sheets" || this.root.hidden || !this.selected.size;
