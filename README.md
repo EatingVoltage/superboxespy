@@ -79,7 +79,8 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   **Re-pack** (the sheets' toolbar, beside **− / +** zoom) forgets your arrangement. Hand-placed parts stay put when
   you change sliders, as long as they still fit.
   The part under the pointer turns amber in the 3D, its edges showing through whatever stands in front of it (a
-  divider inside the closed box); a face's or a board's page does the same for its part. **Double-click a part** to
+  divider inside the closed box); a face's or a board's page does the same for its part. An overlapping part keeps
+  its red, only its edges turn amber. **Double-click a part** to
   open its page: the face it is on the closed box (a stamp case: its board). Parts that are no face (dividers, a
   lid's rim) have none.
 - **Rest pieces:** the rest wood is cut free as rectangles once the parts are done (on by default; **Cut the rest

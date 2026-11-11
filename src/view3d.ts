@@ -7,7 +7,8 @@
 // the sliders can reach. The overlap check runs on the pose shown once nothing moves - not while a parameter slider
 // is held or an animation plays - and overlapping parts turn red. Parts an assembler doesn't place yet lie in front.
 // The part under the pointer in the 2D (a sheet's part, the face or board shown) turns amber, its edges drawn
-// through the parts in front of it, so a divider inside the closed box shows too.
+// through the parts in front of it, so a divider inside the closed box shows too. An overlapping part stays red
+// under the pointer: only its edges turn amber.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
@@ -93,11 +94,12 @@ export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: 
   let bad = new Set<number>();          // parts the overlap check found overlapping
   let hot: number | null = null;        // the part the pointer is on in the 2D
 
-  /** Each part's colours: the one under the 2D's pointer amber, overlapping ones red, the rest wood. */
+  /** Each part's colours: overlapping ones red, the one under the 2D's pointer amber (overlapping, only its edges:
+   *  the warning stays), the rest wood. */
   function paint() {
     for (const it of box?.items ?? []) {
       const i = it.part.index;
-      it.mesh.material = i === hot ? [HOT, HOT_SIDE] : bad.has(i) ? [BAD, BAD_EDGE] : [WOOD, CHAR];
+      it.mesh.material = bad.has(i) ? [BAD, BAD_EDGE] : i === hot ? [HOT, HOT_SIDE] : [WOOD, CHAR];
       it.edges.material = i === hot ? HOT_LINE : EDGES;
       it.edges.renderOrder = i === hot ? 5 : 0;
     }

@@ -307,9 +307,14 @@ export class BoardEditor {
     return this.host.build()?.stampcase ?? null;
   }
 
+  /** The board shown, or null on Sheets. */
+  private board() {
+    return this.data()?.boards.find((b) => b.key === this.tab) ?? null;
+  }
+
   /** The part (index) of the board shown, or null on Sheets. */
   get part(): number | null {
-    return this.data()?.boards.find((b) => b.key === this.tab)?.part ?? null;
+    return this.board()?.part ?? null;
   }
 
   /** A part double-clicked on the sheets: open its board. False when it isn't one (a wall). */
@@ -323,7 +328,7 @@ export class BoardEditor {
   update() {
     const d = this.data();
     if (!d) return;
-    if (!this.tab || (this.tab !== "sheets" && !d.boards.some((b) => b.key === this.tab))) this.tab = d.top_key;
+    if (this.tab !== "sheets" && !this.board()) this.tab = d.top_key;
     // drop selections that no longer exist
     const ids = new Set([...d.pockets.map((p) => p.id), ...d.magnets.map((_, i) => `magnet:${i}`), "top_block", "lid_title", "lid_logo"]);
     for (const s of [...this.selected]) if (!ids.has(s)) this.selected.delete(s);
@@ -388,9 +393,8 @@ export class BoardEditor {
   private draw() {
     const d = this.data();
     const b = this.host.build();
-    if (!d || !b || this.tab === "sheets" || this.root.hidden) return;
-    const board = d.boards.find((q) => q.key === this.tab);
-    if (!board) return;
+    const board = this.board();
+    if (!d || !b || !board || this.root.hidden) return;
     const part = b.parts[board.part];
     const v = this.view ?? this.fitView();
     this.svgRoot.setAttribute("viewBox", v.map((n) => n.toFixed(2)).join(" "));
