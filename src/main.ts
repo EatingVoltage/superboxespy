@@ -437,10 +437,10 @@ function redo() {
 const stampHost: sc.StampHost = {
   params: () => S.params as Case,
   build: () => S.build,
-  commit(next, select) {
+  commit(next, select, panel = true) {
     S.params = next as unknown as Record<string, any>;
     if (select) editor.select(select);
-    renderParamPanel();
+    if (panel) renderParamPanel();
     changed(true);
   },
   async op(op, extra = {}) {

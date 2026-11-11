@@ -129,8 +129,9 @@ function polyD(polys: ShapePoly[] | null, dx = 0, dy = 0): string {
 export interface StampHost {
   params(): Case;
   build(): Build | null;
-  /** The case changed: keep it, push undo, build. select: what to select afterwards. */
-  commit(next: Case, select?: string[]): void;
+  /** The case changed: keep it, push undo, build. select: what to select afterwards. panel = false: the side panel
+   *  control already shows the change, so the panel isn't redrawn (that would drop the field the user clicked next). */
+  commit(next: Case, select?: string[], panel?: boolean): void;
   /** Python's placement for add / duplicate / repack / add_magnet; resolves with the selection it reports. */
   op(op: string, extra?: Record<string, unknown>): Promise<string[] | null>;
   toast(text: string, bad?: boolean): void;
@@ -144,17 +145,19 @@ const SNAP_FALLBACK = 0.5;
 export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEditor) {
   const c = host.params();
   const d = host.build()?.stampcase ?? null;
+  // a stamp half typed into the add row survives a redraw (a drag on the board, Pocket boards)
+  const draft = afterAdd ? [] : [...el.querySelectorAll<HTMLInputElement>(".stamp-add input")].map((i) => i.value);
   el.replaceChildren();
-  const commit = (fn: (c: Case) => void, select?: string[]) => {
+  const commit = (fn: (c: Case) => void, select?: string[], panel = true) => {
     const n = structuredClone(host.params());
     fn(n);
-    host.commit(n, select);
+    host.commit(n, select, panel);
   };
 
   // case
   const g1 = h("section", { class: "group" }, h("h3", {}, "Stamp case"));
   const project = h("input", { type: "text", value: c.project, placeholder: "the design these stamps are for", spellcheck: "false" }) as HTMLInputElement;
-  project.onchange = () => commit((n) => (n.project = project.value));
+  project.onchange = () => commit((n) => (n.project = project.value), undefined, false);
   g1.append(h("label", { class: "row text-row" }, h("span", {}, "Project"), project));
   const seg = h("div", { class: "seg", role: "group", "aria-label": "Pocket boards" });
   for (const k of [1, 2, 3, 4]) {
@@ -168,7 +171,7 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
   if (logos.length) {
     const sel = h("select", { "aria-label": "Logo" }) as HTMLSelectElement;
     for (const f of logos) sel.append(h("option", { value: f, selected: f === c.logo }, f.replace(/\.svg$/i, "")));
-    sel.onchange = () => commit((n) => (n.logo = sel.value));
+    sel.onchange = () => commit((n) => (n.logo = sel.value), undefined, false);
     g1.append(h("label", { class: "row sel-row" }, h("span", {}, "Logo"), sel));
   } else {
     g1.append(h("div", { class: "row hint" }, "No logo: the logos folder (C:\\Projects\\eating voltage Fonts\\logos) isn't reachable."));
@@ -180,6 +183,7 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
   const nName = h("input", { type: "text", placeholder: "name", spellcheck: "false", "aria-label": "Stamp name" }) as HTMLInputElement;
   const nW = h("input", { type: "number", min: 1, step: 0.5, placeholder: "W", class: "num", "aria-label": "Stamp width, mm" }) as HTMLInputElement;
   const nH = h("input", { type: "number", min: 1, step: 0.5, placeholder: "H", class: "num", "aria-label": "Stamp height, mm" }) as HTMLInputElement;
+  if (draft.length) [nName.value, nW.value, nH.value] = draft;
   const add = h("button", { class: "primary-soft", title: "Add the stamp in free space (Enter)" }, "Add");
   const doAdd = async () => {
     const w = Number(nW.value), hh = Number(nH.value);
@@ -188,11 +192,12 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
       (w > 0 ? nH : nW).focus();
       return;
     }
-    focusAdd = true;
-    if (!(await host.op("add", { pocket: { name: nName.value.trim(), w, h: hh } }))) focusAdd = false;
+    afterAdd = true;
+    if (!(await host.op("add", { pocket: { name: nName.value.trim(), w, h: hh } }))) afterAdd = false;
   };
   add.onclick = doAdd;
-  for (const i of [nName, nW, nH]) i.onkeydown = (e) => e.key === "Enter" && doAdd();
+  // block body: an on… handler that returns false cancels the keystroke
+  for (const i of [nName, nW, nH]) i.onkeydown = (e) => { if (e.key === "Enter") doAdd(); };
   g2.append(h("div", { class: "row stamp-add" }, nName, nW, h("span", { class: "unit" }, "×"), nH, add),
     h("div", { class: "hint row" }, "The stamp itself, as measured: 1 mm of air is added on every side."));
   const list = h("div", { class: "stamp-list" });
@@ -209,7 +214,7 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
     const set = (fn: (q: Pocket) => void) => commit((n) => {
       const q = n.pockets.find((x) => x.id === p.id);
       if (q) fn(q);
-    }, [p.id]);
+    }, [p.id], false);
     name.onchange = () => set((q) => (q.name = name.value));
     w.onchange = () => Number(w.value) > 0 && set((q) => (q.w = Number(w.value)));
     hh.onchange = () => Number(hh.value) > 0 && set((q) => (q.h = Number(hh.value)));
@@ -231,13 +236,13 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
   const g3 = h("section", { class: "group stamp-check" });
   el.append(g3);
   renderCheck(el, host, editor);
-  if (focusAdd) {
-    focusAdd = false;
+  if (afterAdd) {
+    afterAdd = false;
     nName.focus();
   }
 }
 
-let focusAdd = false;       // after Add: the new panel's name field gets the focus, ready for the next stamp
+let afterAdd = false;       // this redraw follows an Add: a fresh add row, its name field focused for the next stamp
 
 /** The Check section only: problems (click to show them) and how the boards use the sheets. */
 export function renderCheck(el: HTMLElement, host: StampHost, editor: BoardEditor) {
