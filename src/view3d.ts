@@ -6,16 +6,23 @@
 // clear size on the floor. After every rebuild the camera keeps its angle and glides so the box fits in every pose
 // the sliders can reach. The overlap check runs on the pose shown once nothing moves - not while a parameter slider
 // is held or an animation plays - and overlapping parts turn red. Parts an assembler doesn't place yet lie in front.
+// The part under the pointer in the 2D (a sheet's part, the face or board shown) turns amber, its edges drawn
+// through the parts in front of it, so a divider inside the closed box shows too.
 
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { CSS2DObject, CSS2DRenderer } from "three/addons/renderers/CSS2DRenderer.js";
 import * as py from "./py";
-import { BAD, BAD_EDGE, CHAR, GeometryCache, WOOD, buildBoxScene, lights, type BoxScene, type Pt3 } from "./boxscene";
+import { BAD, BAD_EDGE, CHAR, EDGES, GeometryCache, WOOD, buildBoxScene, lights, type BoxScene, type Pt3 } from "./boxscene";
 import { btn, fillToolbar, toggle } from "./ui";
 import type { Build } from "./types";
 
 const PLY = new THREE.MeshStandardMaterial({ color: 0x8a7a5e, roughness: 1, transparent: true, opacity: 0.35 });
+const AMBER = 0xf2b33d;      // the interface's --accent (style.css): the dimensions, the highlight
+// the part under the pointer in the 2D: amber, its edges drawn through whatever stands in front of it
+const HOT = new THREE.MeshStandardMaterial({ color: AMBER, roughness: 0.6, metalness: 0, emissive: 0x3a2600 });
+const HOT_SIDE = new THREE.MeshStandardMaterial({ color: 0xa8741a, roughness: 0.8, metalness: 0 });
+const HOT_LINE = new THREE.LineBasicMaterial({ color: AMBER, transparent: true, depthTest: false, depthWrite: false });
 const VIEW = new THREE.Vector3(0.9, -1.5, 1.1).normalize();   // the default 3/4 view
 const GLIDE_MS = 150;
 const FILL = 0.92;            // share of the view the motion envelope fills
@@ -83,9 +90,22 @@ export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: 
   let lastKey = "";
   let draft = false;                    // the shown build is a slider-drag build: no overlap check yet
   const pose = { explode: 0, open: 0 };
+  let bad = new Set<number>();          // parts the overlap check found overlapping
+  let hot: number | null = null;        // the part the pointer is on in the 2D
+
+  /** Each part's colours: the one under the 2D's pointer amber, overlapping ones red, the rest wood. */
+  function paint() {
+    for (const it of box?.items ?? []) {
+      const i = it.part.index;
+      it.mesh.material = i === hot ? [HOT, HOT_SIDE] : bad.has(i) ? [BAD, BAD_EDGE] : [WOOD, CHAR];
+      it.edges.material = i === hot ? HOT_LINE : EDGES;
+      it.edges.renderOrder = i === hot ? 5 : 0;
+    }
+    redraw();
+  }
 
   // ---- dimensions: lines on the closed box's outside, labels as HTML on top
-  const DIM = new THREE.LineBasicMaterial({ color: 0xf2b33d, transparent: true, depthTest: false, depthWrite: false });
+  const DIM = new THREE.LineBasicMaterial({ color: AMBER, transparent: true, depthTest: false, depthWrite: false });
   const dims = new THREE.Group();
   scene.add(dims);
   const dimLines = new THREE.LineSegments(new THREE.BufferGeometry(), DIM);
@@ -400,8 +420,8 @@ export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: 
   function animationStarted() {
     clearTimeout(clashTimer);
     clashDots.clear();
-    redraw();
-    for (const it of box?.items ?? []) it.mesh.material = [WOOD, CHAR];
+    bad = new Set();
+    paint();
     status.textContent = "playing - the overlap check runs when it stops";
     status.className = "";
     syncButtons();
@@ -529,14 +549,14 @@ export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: 
       status.className = "clash";
       return;
     }
-    const bad = new Set<number>();
+    bad = new Set();
     for (const c of r.clashes) {
       bad.add(c.a);
       bad.add(c.b);
       const g = new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(c.points.flat(), 3));
       clashDots.add(new THREE.Points(g, new THREE.PointsMaterial({ color: 0xff2040, size: 6, sizeAttenuation: false })));
     }
-    for (const it of box.items) it.mesh.material = bad.has(it.part.index) ? [BAD, BAD_EDGE] : [WOOD, CHAR];
+    paint();
     if (r.clashes.length) {
       const names = r.clashes.slice(0, 3).map((c) => `${owner.get(c.a)?.part.name} × ${owner.get(c.b)?.part.name}`).join(", ");
       status.textContent = `⚠ ${r.clashes.length} overlap${r.clashes.length > 1 ? "s" : ""}: ${names}`;
@@ -561,6 +581,8 @@ export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: 
     cache.sweep();
     if (!box) return;
     scene.add(box.root);
+    bad = new Set();
+    paint();
     if (box.asm.kind === "flat") {
       // the sheets themselves under the parts, as in the 2D view
       const sh = (getRequest() as { sheet?: { w: number; h: number } }).sheet ?? { w: 297, h: 420 };
@@ -636,6 +658,12 @@ export function createView3D(el: HTMLElement, toolsEl: HTMLElement, controlsEl: 
     },
     resize() {
       if (resize()) fit(false);
+    },
+    /** Mark a part (index) as the one the pointer is on in the 2D, or none. */
+    highlight(i: number | null) {
+      if (i === hot) return;
+      hot = i;
+      paint();
     },
     dispose() {
       cancelAnimationFrame(raf);

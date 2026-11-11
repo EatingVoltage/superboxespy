@@ -39,7 +39,7 @@ export const BAD_EDGE = new THREE.MeshStandardMaterial({ color: 0x9b1030, roughn
 const ENGRAVE = new THREE.LineBasicMaterial({ color: 0x4a2c12 });
 const MAGNET = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.35, metalness: 0.8 });
 const STAMP = new THREE.MeshStandardMaterial({ color: 0x8c3b2f, roughness: 0.9, metalness: 0 });
-const EDGES = new THREE.LineBasicMaterial({ color: 0x3b250f, transparent: true, opacity: 0.55 });
+export const EDGES = new THREE.LineBasicMaterial({ color: 0x3b250f, transparent: true, opacity: 0.55 });
 
 export function lights(scene: THREE.Scene) {
   scene.add(new THREE.HemisphereLight(0xfff4e0, 0x3a3f48, 2.2));
@@ -63,7 +63,8 @@ function matrix4(m: number[]): THREE.Matrix4 {
   return M;
 }
 
-export interface Item { group: THREE.Group; mesh: THREE.Mesh; base: THREE.Matrix4; place: Placed3D; part: PartJ }
+export interface Item { group: THREE.Group; mesh: THREE.Mesh; edges: THREE.LineSegments; base: THREE.Matrix4; place: Placed3D;
+                       part: PartJ }
 
 export interface BoxScene {
   root: THREE.Group;
@@ -194,15 +195,15 @@ export function buildBoxScene(b: Build, thickness: number,
     const mesh = new THREE.Mesh(geo, [WOOD, CHAR]);
     const group = new THREE.Group();
     group.matrixAutoUpdate = false;
-    group.add(mesh);
-    group.add(new THREE.LineSegments(edges, EDGES));
+    const lines = new THREE.LineSegments(edges, EDGES);
+    group.add(mesh, lines);
     if (withExtras) {
       const eng = engraving(part, thickness);
       if (eng) group.add(eng);
       for (const m of engravedFill(part, thickness)) group.add(m);
     }
     root.add(group);
-    items.push({ group, mesh, base: matrix4(place.m), place, part });
+    items.push({ group, mesh, edges: lines, base: matrix4(place.m), place, part });
   };
   for (const part of b.parts) {
     const place = asm.parts[part.index];

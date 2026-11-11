@@ -307,6 +307,19 @@ export class BoardEditor {
     return this.host.build()?.stampcase ?? null;
   }
 
+  /** The part (index) of the board shown, or null on Sheets. */
+  get part(): number | null {
+    return this.data()?.boards.find((b) => b.key === this.tab)?.part ?? null;
+  }
+
+  /** A part double-clicked on the sheets: open its board. False when it isn't one (a wall). */
+  openPart(i: number): boolean {
+    const board = this.data()?.boards.find((b) => b.part === i);
+    if (!board) return false;
+    this.setTab(board.key);
+    return true;
+  }
+
   update() {
     const d = this.data();
     if (!d) return;

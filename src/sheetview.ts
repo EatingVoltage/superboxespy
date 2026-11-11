@@ -1,8 +1,10 @@
 // 2D sheets: what LightBurn will get, drawn in the layer colours on a plywood-coloured A3. Parts can be dragged
 // (also onto another sheet), rotated with R, nudged with the arrow keys. Anything that breaks the sheet rules
-// (3 mm edge, 1.5 mm gap, 390 mm reach line) turns red and blocks the export.
+// (3 mm edge, 1.5 mm gap, 390 mm reach line) turns red and blocks the export. The part under the pointer is marked
+// in the 3D; a double-click opens its page (a face of the box, a stamp case board).
 
 import type { Build, PartJ, Placement, Sheet, Subpath } from "./types";
+import { DRAG_PX } from "./ui";
 
 const EDGE = 3;
 const GAP = 1.5;
@@ -136,7 +138,16 @@ const mm = (v: number) => v.toFixed(0);
 export interface SheetViewEvents {
   change(placements: Placement[], moved: number[]): void;
   select(part: number | null): void;
+  hover?(part: number | null): void;  // the part under the pointer (the 3D marks it), sent again on every crossing
+  open?(part: number): void;          // a part double-clicked: its own page (a face, a board)
+  fill?(): void;                      // empty space double-clicked: the sheets fill the view
 }
+
+/** The part (index) an event's target belongs to, or null. */
+const partOf = (t: EventTarget | null) => {
+  const pg = t instanceof Element ? t.closest<SVGGElement>(".part") : null;
+  return pg ? Number(pg.dataset.i) : null;
+};
 
 export class SheetView {
   private build: Build | null = null;
@@ -145,10 +156,17 @@ export class SheetView {
   private selected: number | null = null;
   private zoom = 1;
   private rest = true;
+  private pressed: number | null = null;   // the part the last press was on (null: empty space)
 
   constructor(private root: HTMLElement, private ev: SheetViewEvents) {
     root.tabIndex = 0;
     root.addEventListener("keydown", (e) => this.key(e));
+    root.addEventListener("pointerover", (e) => this.ev.hover?.(partOf(e.target)));
+    root.addEventListener("pointerleave", () => this.ev.hover?.(null));
+    // A double-click is the part its press was on, not the part under its target: a redraw between the clicks
+    // can leave the event on the sheets themselves. Captured: a part's own press stops at the part.
+    root.addEventListener("pointerdown", (e) => (this.pressed = partOf(e.target)), { capture: true });
+    root.addEventListener("dblclick", () => (this.pressed == null ? this.ev.fill?.() : this.ev.open?.(this.pressed)));
     root.addEventListener("wheel", (e) => {
       if (!e.ctrlKey) return;
       e.preventDefault();
@@ -290,7 +308,8 @@ export class SheetView {
       const [x, y] = this.toSheet(frame, ev);
       const nx = snap(orig.x + x - start[0]);
       const ny = snap(orig.y + y - start[1]);
-      if (!moved && Math.hypot(nx - orig.x, ny - orig.y) < 0.5) return;
+      if (!moved && (Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < DRAG_PX ||
+                     Math.hypot(nx - orig.x, ny - orig.y) < 0.5)) return;
       moved = true;
       pl.x = nx;
       pl.y = ny;

@@ -4,6 +4,10 @@
 
 import { h } from "./params";
 
+/** How far (screen px) the pointer goes before a press becomes a drag: a click's wobble, a double-click's too,
+ *  moves nothing. */
+export const DRAG_PX = 4;
+
 export type MenuItem =
   | { label: string; run: () => void; detail?: string; title?: string; disabled?: boolean }
   | { heading: string }

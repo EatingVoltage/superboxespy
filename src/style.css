@@ -273,9 +273,23 @@ input[type=range] { width: 100%; accent-color: var(--accent); margin: 0; }
 .divider:hover, .divider:focus-visible, .divider.dragging { background: var(--accent); outline: none; }
 .split.max-sheets .half-3d, .split.max-sheets .divider, .split.max-3d .half-sheets, .split.max-3d .divider { display: none; }
 .split.max-sheets .half-sheets { flex: 1 1 0; }
+.restore { display: none; flex: none; width: 30px; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+  padding: 0; border: 0; border-radius: 0; background: var(--panel); color: var(--muted); cursor: pointer;
+  font: 700 11px/1 var(--ui); letter-spacing: .04em; }
+.restore-3d { border-left: 1px solid var(--line); }
+.restore-2d { border-right: 1px solid var(--line); }
+.restore svg path { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.restore:hover, .restore:focus-visible { color: var(--accent); background: var(--panel-2); outline: none; }
+.restore:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.split.max-sheets .restore-3d, .split.max-3d .restore-2d { display: flex; }
 @media (max-width: 1100px) {
   .split { flex-direction: column; }
   .divider { width: auto; height: 6px; cursor: row-resize; }
+  /* the 2D above, the 3D below: the strips lie across, their arrows turned to point into the view */
+  .restore { width: auto; height: 30px; flex-direction: row; }
+  .restore svg { transform: rotate(90deg); }
+  .restore-3d { border-left: 0; border-top: 1px solid var(--line); }
+  .restore-2d { border-right: 0; border-bottom: 1px solid var(--line); }
 }
 
 /* ---------- toolbars: one on top of each view, its tools for what's shown (src/ui.ts) */

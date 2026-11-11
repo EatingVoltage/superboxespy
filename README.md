@@ -68,7 +68,8 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   (Dimensions, Bold) is a button, lit amber while on.
 - **The work area:** the 2D on the left, the 3D on the right, both following a slider while you drag it.
   Drag the divider (or focus it and use the arrow keys) to share the space; it's remembered. Double-click empty
-  space on the sheets, or the 3D, to let that side fill the view; double-click again to split. The 2D has one row of
+  space on the sheets, or the 3D, to let that side fill the view; double-click again, or click the arrow strip on
+  the edge where the other half was (**‹ 3D**, **2D ›**), to split. The 2D has one row of
   tabs (**Sheets**, then a tab per face, or per board for the stamp case), and under it a toolbar with the tools
   for what's shown.
 - **Sheets:** parts are packed from the lower left, so what's left is mostly one clean piece across the top. Drag
@@ -77,6 +78,10 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   1.5 mm to another part or 3 mm to the edge, or above the 390 mm reach line, turns red and blocks the export.
   **Re-pack** (the sheets' toolbar, beside **− / +** zoom) forgets your arrangement. Hand-placed parts stay put when
   you change sliders, as long as they still fit.
+  The part under the pointer turns amber in the 3D, its edges showing through whatever stands in front of it (a
+  divider inside the closed box); a face's or a board's page does the same for its part. **Double-click a part** to
+  open its page: the face it is on the closed box (a stamp case: its board). Parts that are no face (dividers, a
+  lid's rim) have none.
 - **Rest pieces:** the rest wood is cut free as rectangles once the parts are done (on by default; **Cut the rest
   pieces free** under Mark & notes). The sheets show each piece with its size and the dashed magenta cuts that
   free it, and follow while you drag. The cuts carry the parts' own edges out to the sheet's edges: the full width

@@ -33,6 +33,11 @@
       <div class="panes">
         <div class="pane" data-pane="box">
           <div id="split" class="split">
+            <!-- while one half fills the view, a strip on the hidden half's edge brings it back -->
+            <button id="show-2d" class="restore restore-2d" type="button" aria-label="Bring the 2D back"
+                    title="Bring the 2D back (double-click the 3D to fill the view with it again)">
+              <svg viewBox="0 0 10 16" width="10" height="16" aria-hidden="true"><path d="M2 2l6 6-6 6"/></svg><span>2D</span>
+            </button>
             <div class="half half-sheets">
               <!-- the tabs, then the toolbar of what's shown, the drawing, and under it the selection's bar -->
               <nav id="board-tabs" class="board-tabs" role="tablist" aria-label="Stamp case boards" hidden></nav>
@@ -54,6 +59,10 @@
               <div id="view3d" class="view3d" title="Double-click to fill the view with the 3D"></div>
               <div id="view3d-controls" class="view3d-controls"></div>
             </div>
+            <button id="show-3d" class="restore restore-3d" type="button" aria-label="Bring the 3D back"
+                    title="Bring the 3D back (double-click empty space on the sheets to fill the view with them again)">
+              <svg viewBox="0 0 10 16" width="10" height="16" aria-hidden="true"><path d="M8 2 2 8l6 6"/></svg><span>3D</span>
+            </button>
           </div>
         </div>
         <div class="pane" data-pane="calib" hidden>

@@ -497,7 +497,23 @@ const sheetView = new SheetView($("sheets"), {
   select(i) {
     renderInspector(i);
   },
+  hover: (i) => view3d?.highlight(i),
+  open(i) {
+    if (pages().openPart(i)) return;
+    const p = S.build?.parts[i];
+    if (p) toast(`${p.name}: no page of its own. Only the closed box's faces have one.`);
+  },
+  fill: () => toggleFill("sheets"),
 });
+
+/** The editor of the parts' pages: the stamp case's boards, or any other type's faces. */
+const pages = () => (isStamp() ? editor : faceEditor);
+
+// the face or board shown is a part too: the 3D marks it while the pointer is on its drawing
+for (const id of ["face", "board"]) {
+  $(id).addEventListener("pointerenter", () => view3d?.highlight(pages().part));
+  $(id).addEventListener("pointerleave", () => view3d?.highlight(null));
+}
 
 function renderInspector(i: number | null) {
   const el = $("inspector");
@@ -798,7 +814,7 @@ async function exportFiles(kind: "lbrn2" | "svg", open = false) {
 }
 
 // ------------------------------------------------------------------ tabs, sheets | 3D split
-type View3D = { update(b: Build, gen: string, m: ReturnType<typeof material>, draft?: boolean): void; resize(): void };
+type View3D = ReturnType<typeof import("./view3d").createView3D>;   // a type only: the 3D still loads when first shown
 let view3d: View3D | null = null;
 let view3dLoading: Promise<void> | null = null;
 let view3dStale = true;          // a build the 3D hasn't shown yet (it was hidden)
@@ -852,7 +868,9 @@ function renderSheetTools() {
     ["Arrows", "nudge 1 mm (Shift: 10 mm)"],
     ["PgUp / PgDn", "to the sheet before / after"],
     ["Ctrl+wheel", "zoom"],
-    ["Double-click", "empty space: the sheets fill the view (again: split)"],
+    ["Double-click", "a part: its page (a face of the box) · empty space: the sheets fill the view (again, or the " +
+      "‹ 3D strip on the right: split)"],
+    ["Hover", "a part: the 3D shows it in amber"],
     ["Esc", "deselect"],
     ["Ctrl+Z / Ctrl+Y", "undo / redo"],
   ], [
@@ -865,7 +883,8 @@ function renderSheetTools() {
 const SPLIT_KEY = "superboxes.split";
 
 /** The divider between sheets and 3D: drag or arrow keys; where it sits is remembered. Double-click on the
- *  sheets' empty space or on the 3D makes that half fill the view, again to split. */
+ *  sheets' empty space or on the 3D makes that half fill the view, again to split; so does the arrow strip that
+ *  stands on the hidden half's edge meanwhile. */
 function wireSplit() {
   const split = $("split");
   const divider = $("divider");
@@ -907,17 +926,23 @@ function wireSplit() {
       frac = set(frac + step);
     }
   };
-  const toggle = (which: "max-sheets" | "max-3d") => {
-    const on = !split.classList.contains("max-sheets") && !split.classList.contains("max-3d");
-    split.classList.remove("max-sheets", "max-3d");
-    if (on) split.classList.add(which);
-    if (!split.classList.contains("max-sheets")) show3D();
-  };
-  $("sheets").addEventListener("dblclick", (e) => {
-    if (!(e.target as Element).closest(".part")) toggle("max-sheets");
-  });
-  $("view3d").addEventListener("dblclick", () => toggle("max-3d"));
+  $("view3d").addEventListener("dblclick", () => toggleFill("3d"));   // the sheets' own: SheetView's fill
+  // the strip on the hidden half's edge: back to the split
+  $("show-3d").onclick = $("show-2d").onclick = () => fillView(null);
   new ResizeObserver(() => sheetView.fit()).observe($("sheets"));
+}
+
+/** Let one half fill the view, or (null) split again. */
+function fillView(half: "sheets" | "3d" | null) {
+  const split = $("split");
+  split.classList.remove("max-sheets", "max-3d");
+  if (half) split.classList.add(`max-${half}`);
+  if (half !== "sheets") show3D();
+}
+
+/** A double-click on a half: it fills the view; while one half does, they split again. */
+function toggleFill(half: "sheets" | "3d") {
+  fillView($("split").matches(".max-sheets, .max-3d") ? null : half);
 }
 
 function renderCalib() {

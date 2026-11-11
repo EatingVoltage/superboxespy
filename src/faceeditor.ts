@@ -15,7 +15,7 @@
 
 import { h } from "./params";
 import { call } from "./py";
-import { btn, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem } from "./ui";
+import { DRAG_PX, btn, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
 const NS = "http://www.w3.org/2000/svg";
@@ -176,8 +176,30 @@ export class FaceEditor {
     return this.active && this.tab !== "sheets" ? this.tab : null;
   }
 
+  /** The part (index) holding the face shown, or null on Sheets. */
+  get part(): number | null {
+    const f = this.face;
+    return f ? this.info()[f]?.part ?? null : null;
+  }
+
+  /** A part double-clicked on the sheets: open the face it holds, seen from outside. False when it holds none
+   *  (a divider, a lid's rim). */
+  openPart(i: number): boolean {
+    const info = this.info();
+    const role = this.roles().find((r) => info[r].part === i);
+    if (!role) return false;
+    this.setTab(role);
+    return true;
+  }
+
   private info(): Record<string, FaceInfo> {
     return this.host.build()?.faces ?? {};
+  }
+
+  /** The faces that have a page (a tab), in tab order. */
+  private roles(): string[] {
+    const info = this.info();
+    return ORDER.filter((r) => info[r] && READY.has(r));
   }
 
   private items(role = this.faceKey): FaceItem[] {
@@ -186,8 +208,7 @@ export class FaceEditor {
 
   update() {
     if (!this.active) return;
-    const info = this.info();
-    if (this.tab !== "sheets" && !(info[this.tab] && READY.has(this.tab))) this.setTab("sheets");
+    if (this.tab !== "sheets" && !this.roles().includes(this.tab)) this.setTab("sheets");
     if (this.selected && !this.items().some((i) => i.id === this.selected)) this.selected = null;
     this.renderTabs();
     this.renderTools();
@@ -228,10 +249,9 @@ export class FaceEditor {
   }
 
   private renderTabs() {
-    const info = this.info();
     const faces = this.host.faces();
     this.tabs.replaceChildren();
-    for (const role of ["sheets", ...ORDER.filter((r) => info[r] && READY.has(r))]) {
+    for (const role of ["sheets", ...this.roles()]) {
       const n = role === "sheets" ? 0 : (faces[role] ?? []).length + (faces[role + ".in"] ?? []).length;
       const b = h("button", { role: "tab", "aria-selected": this.tab === role,
         title: role === "sheets" ? "The parts on the sheets" : `What goes on the ${role}, outside and inside` },
@@ -580,7 +600,7 @@ export class FaceEditor {
     let ghost: HTMLElement | null = null;
     const move = (m: PointerEvent) => {
       if (!ghost) {
-        if (this.libMode === "swap" || Math.hypot(m.clientX - sx, m.clientY - sy) < 5) return;
+        if (this.libMode === "swap" || Math.hypot(m.clientX - sx, m.clientY - sy) < DRAG_PX) return;
         ghost = this.ghost(e);
         document.body.append(ghost);
         this.lib.hidden = true;                     // the whole face is the drop target
