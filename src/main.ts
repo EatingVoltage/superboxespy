@@ -348,8 +348,7 @@ async function rebuild(final = true) {
   if (!isStamp()) faceEditor.update();
   if (isStamp() && b.stampcase) {
     editor.update();
-    if ($("params").contains(document.activeElement)) sc.renderCheck($("params"), stampHost, editor);
-    else renderParamPanel();
+    sc.renderCheck($("params"), stampHost, editor);
   }
   updateMessages();
   renderOutputHint();
@@ -442,10 +441,10 @@ function redo() {
 const stampHost: sc.StampHost = {
   params: () => S.params as Case,
   build: () => S.build,
-  commit(next, select, panel = true) {
+  commit(next, select) {
     S.params = next as unknown as Record<string, any>;
     if (select) editor.select(select);
-    if (panel) renderParamPanel();
+    renderParamPanel();
     changed(true);
   },
   async op(op, extra = {}) {

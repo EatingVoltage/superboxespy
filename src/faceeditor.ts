@@ -17,7 +17,7 @@ import { openFile } from "./files";
 import { h } from "./params";
 import { call } from "./py";
 import { clientToMM, insideRing, ringsD, svgEl } from "./sheetview";
-import { DRAG_PX, btn, fillToolbar, helpButton, helpCard, holdWhileTyping, menuButton, seg, toggle, type MenuItem } from "./ui";
+import { DRAG_PX, btn, fillBar, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
 export type Faces = Record<string, FaceItem[]>;
@@ -133,7 +133,6 @@ export class FaceEditor {
   private resize: { id: string; fx: number; fy: number; hx: number; hy: number; b: number[]; size: number; k: number } | null = null;
   private lib: HTMLElement;                    // the logo library's popover
   private libMode: "add" | "swap" = "add";     // add a logo, or put one in place of the selected logo
-  private focusBoard = false;                  // an edge connector just went on a wall without a board height: ask
 
   constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
               private host: FaceHost) {
@@ -474,15 +473,16 @@ export class FaceEditor {
       ...(p.name ? { part: p.name } : {}),
       ...(p.kind === "edge" ? { board: true, lift: p.lift ?? -0.5 } : {}) };
     // the first connector on a wall asks for the board's height: its bar opens with the field in focus
-    if (p.kind === "edge" && this.host.boards()[this.tab] == null) this.focusBoard = true;
-    this.addItem(item);
+    this.addItem(item, p.kind === "edge" && this.host.boards()[this.tab] == null);
   }
 
-  private addItem(item: FaceItem) {
+  /** A new item, selected: its bar shows at once (askBoard: with the board height field in focus). */
+  private addItem(item: FaceItem, askBoard = false) {
     const faces = structuredClone(this.host.faces());
     faces[this.faceKey] = [...(faces[this.faceKey] ?? []), item];
     this.selected = item.id;
     this.host.commit(faces);
+    this.renderBar(askBoard);
   }
 
   /** Hole ▾: the plain shapes, the parts library's panel holes, and on a wall the edge connectors. A hole lands in
@@ -722,16 +722,16 @@ export class FaceEditor {
   }
 
   // ---------------------------------------------------------------- the bar under the face: the selected item
-  private renderBar() {
-    if (holdWhileTyping(this.bar, () => this.renderBar())) return;
+  private renderBar(askBoard = false) {
     const f = this.info()[this.faceKey];
     const it = this.items().find((i) => i.id === this.selected);
     this.bar.hidden = this.root.hidden || !f || !it;
     if (!f || !it) {
-      this.bar.replaceChildren();
+      fillBar(this.bar, "", []);
       return;
     }
     const kids: (Node | string)[] = [];
+    let ask: HTMLInputElement | null = null;
     const num = (value: number, label: string, set: (v: number) => void, step = 0.5, min = 1) => {
       const i = h("input", { type: "number", min, step, value: value, class: "num", "aria-label": label }) as HTMLInputElement;
       i.onchange = () => {
@@ -779,13 +779,7 @@ export class FaceEditor {
         kids.push(h("label", { class: `check${v == null ? " bad-text" : ""}`, title: "The board's top surface above the " +
           "box's inside floor (standoff + board), the same for every connector on this wall" },
           "board at", board, "mm above the floor"));
-        if (this.focusBoard) {
-          this.focusBoard = false;
-          requestAnimationFrame(() => {
-            board.focus();
-            board.select();
-          });
-        }
+        if (askBoard) ask = board;
       }
     } else if (it.kind === "svg") {
       kids.push(h("b", { title: "An imported SVG, kept in the box" }, it.name ?? "SVG"), h("span", {}, "height"),
@@ -815,6 +809,10 @@ export class FaceEditor {
     }
     kids.push(btn("Duplicate", "Ctrl+D", () => this.duplicate()), btn("Delete", "Del", () => this.remove()),
       h("span", { class: "hint" }, where), state);
-    this.bar.replaceChildren(...kids);
+    fillBar(this.bar, `${this.faceKey} ${it.id} ${it.kind}`, kids);
+    if (ask) {
+      ask.focus();
+      ask.select();
+    }
   }
 }

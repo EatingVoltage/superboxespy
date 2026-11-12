@@ -8,7 +8,7 @@
 
 import { h } from "./params";
 import { clientToMM, insideRing, pathD, ringsD, svgEl } from "./sheetview";
-import { btn, fillToolbar, helpButton, helpCard, holdWhileTyping, seg } from "./ui";
+import { btn, fillBar, fillToolbar, helpButton, helpCard, seg } from "./ui";
 import type { Block, BlockKey, Build, Case, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
 
 export const GENERATOR = "StampCase";
@@ -111,9 +111,8 @@ const polyD = (polys: ShapePoly[] | null, dx = 0, dy = 0) => ringsD(rings(polys)
 export interface StampHost {
   params(): Case;
   build(): Build | null;
-  /** The case changed: keep it, push undo, build. select: what to select afterwards. panel = false: the side panel
-   *  control already shows the change, so the panel isn't redrawn (that would drop the field the user clicked next). */
-  commit(next: Case, select?: string[], panel?: boolean): void;
+  /** The case changed: keep it, push undo, show it in the side panel, build. select: what to select afterwards. */
+  commit(next: Case, select?: string[]): void;
   /** Python's placement for add / duplicate / repack / add_magnet; resolves with the selection it reports. */
   op(op: string, extra?: Record<string, unknown>): Promise<string[] | null>;
   toast(text: string, bad?: boolean): void;
@@ -124,46 +123,66 @@ export interface StampHost {
 const SNAP_FALLBACK = 0.5;
 
 // ------------------------------------------------------------------ side panel
+// Drawn once for the case shown. After that the stamp list is drawn again only when its stamps change (add, delete,
+// duplicate, another case); otherwise every field takes the case's value, except the one the user is in. What a build
+// brings - the pockets' depth, the logos, the Check, the red rows - refreshes after every build (renderCheck). So
+// neither an edit nor a build landing takes a field, a click or a half-typed stamp from under the user.
+
+/** The case with fn applied, handed to the host. */
+function commitWith(host: StampHost, fn: (c: Case) => void, select?: string[]) {
+  const n = structuredClone(host.params());
+  fn(n);
+  host.commit(n, select);
+}
+
+/** A field shows `v`, unless the user is in it (a number stays as typed while it means the same: 40.0). */
+function setField(i: HTMLInputElement, v: string | number) {
+  if (i === document.activeElement) return;
+  if (typeof v === "string") {
+    if (i.value !== v) i.value = v;
+  } else if (Number(i.value) !== v) i.value = v ? String(v) : "";
+}
+
 export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEditor) {
+  if (!el.querySelector(".stamp-list")) drawPanel(el, host);
   const c = host.params();
-  const d = host.build()?.stampcase ?? null;
-  // a stamp half typed into the add row survives a redraw (a drag on the board, Pocket boards)
-  const draft = afterAdd ? [] : [...el.querySelectorAll<HTMLInputElement>(".stamp-add input")].map((i) => i.value);
-  el.replaceChildren();
-  const commit = (fn: (c: Case) => void, select?: string[], panel = true) => {
-    const n = structuredClone(host.params());
-    fn(n);
-    host.commit(n, select, panel);
-  };
-
-  // case
-  const g1 = h("section", { class: "group" }, h("h3", {}, "Stamp case"));
-  const project = h("input", { type: "text", value: c.project, placeholder: "the design these stamps are for", spellcheck: "false" }) as HTMLInputElement;
-  project.onchange = () => commit((n) => (n.project = project.value), undefined, false);
-  g1.append(h("label", { class: "row text-row" }, h("span", {}, "Project"), project));
-  const thick = host.build()?.info.thickness ?? 3.7;
-  const boards = seg("Pocket boards", [1, 2, 3, 4].map((k): [number, string, string] =>
-    [k, String(k), `${k} pocket board${k > 1 ? "s" : ""}: pockets ${(k * thick).toFixed(1)} mm deep`]),
-  c.pocket_boards, (k) => commit((n) => (n.pocket_boards = k)));
-  g1.append(h("div", { class: "row" }, h("div", { class: "row-head" }, h("label", {}, "Pocket boards"),
-    h("span", { class: "hint" }, d ? `pockets ${d.depth.toFixed(1)} mm deep` : "")), boards));
-  const logos = d?.logos ?? [];
-  if (logos.length) {
-    const sel = h("select", { "aria-label": "Logo" }) as HTMLSelectElement;
-    for (const f of logos) sel.append(h("option", { value: f, selected: f === c.logo }, f.replace(/\.svg$/i, "")));
-    sel.onchange = () => commit((n) => (n.logo = sel.value), undefined, false);
-    g1.append(h("label", { class: "row sel-row" }, h("span", {}, "Logo"), sel));
+  setField(el.querySelector<HTMLInputElement>(".stamp-project")!, c.project);
+  el.querySelector(".stamps > h3")!.textContent = `Stamps (${c.pockets.length})`;
+  const list = el.querySelector<HTMLElement>(".stamp-list")!;
+  const ids = c.pockets.map((p) => p.id).join(" ");
+  if (list.dataset.ids !== ids) {
+    list.dataset.ids = ids;
+    list.replaceChildren(...c.pockets.map((p) => stampRow(p, host, editor)));
   } else {
-    g1.append(h("div", { class: "row hint" }, "No logo: the logos folder (C:\\Projects\\eating voltage Fonts\\logos) isn't reachable."));
+    c.pockets.forEach((p, k) => {
+      const row = list.children[k] as HTMLElement;
+      const [name, w, hh, t] = row.querySelectorAll("input");
+      setField(name, p.name);
+      setField(w, p.w);
+      setField(hh, p.h);
+      setField(t, p.thickness ?? 0);
+      row.querySelector("button")!.setAttribute("aria-label", `Delete ${p.name || "stamp"}`);
+      row.classList.toggle("sel", editor.selected.has(p.id));
+    });
   }
-  el.append(g1);
+  renderCheck(el, host, editor);
+}
 
-  // stamps
-  const g2 = h("section", { class: "group stamps" }, h("h3", {}, `Stamps (${c.pockets.length})`));
+/** The panel's frame: the case's fields, the add row, an empty stamp list and Check (renderPanel fills them). */
+function drawPanel(el: HTMLElement, host: StampHost) {
+  const project = h("input", { type: "text", class: "stamp-project", placeholder: "the design these stamps are for",
+    spellcheck: "false" }) as HTMLInputElement;
+  project.onchange = () => commitWith(host, (n) => (n.project = project.value));
+  // Pocket boards and the logo depend on the build too: renderCheck puts them in
+  const g1 = h("section", { class: "group" }, h("h3", {}, "Stamp case"),
+    h("label", { class: "row text-row" }, h("span", {}, "Project"), project),
+    h("div", { class: "row stamp-boards" }, h("div", { class: "row-head" }, h("label", {}, "Pocket boards"),
+      h("span", { class: "hint" })), h("span")),
+    h("div", { class: "stamp-logo" }));
+
   const nName = h("input", { type: "text", placeholder: "name", spellcheck: "false", "aria-label": "Stamp name" }) as HTMLInputElement;
   const nW = h("input", { type: "number", min: 1, step: 0.5, placeholder: "W", class: "num", "aria-label": "Stamp width, mm" }) as HTMLInputElement;
   const nH = h("input", { type: "number", min: 1, step: 0.5, placeholder: "H", class: "num", "aria-label": "Stamp height, mm" }) as HTMLInputElement;
-  if (draft.length) [nName.value, nW.value, nH.value] = draft;
   const add = h("button", { class: "primary-soft", title: "Add the stamp in free space (Enter)" }, "Add");
   const doAdd = async () => {
     const w = Number(nW.value), hh = Number(nH.value);
@@ -172,61 +191,82 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
       (w > 0 ? nH : nW).focus();
       return;
     }
-    afterAdd = true;
-    if (!(await host.op("add", { pocket: { name: nName.value.trim(), w, h: hh } }))) afterAdd = false;
+    if (!(await host.op("add", { pocket: { name: nName.value.trim(), w, h: hh } }))) return;
+    nName.value = nW.value = nH.value = "";        // a fresh add row, its name field ready for the next stamp
+    nName.focus();
   };
   add.onclick = doAdd;
   // block body: an on… handler that returns false cancels the keystroke
   for (const i of [nName, nW, nH]) i.onkeydown = (e) => { if (e.key === "Enter") doAdd(); };
-  g2.append(h("div", { class: "row stamp-add" }, nName, nW, h("span", { class: "unit" }, "×"), nH, add),
-    h("div", { class: "hint row" }, "The stamp itself, as measured: 1 mm of air is added on every side."));
-  const list = h("div", { class: "stamp-list" });
-  for (const p of c.pockets) {
-    const sel = editor.selected.has(p.id);
-    const row = h("div", { class: `stamp-row${sel ? " sel" : ""}`, "data-id": p.id });   // red: renderCheck
-    const name = h("input", { type: "text", value: p.name, spellcheck: "false", "aria-label": "Name" }) as HTMLInputElement;
-    const num = (v: number | undefined, label: string, ph = "") =>
-      h("input", { type: "number", min: 0, step: 0.5, value: v ? String(v) : "", placeholder: ph, class: "num", "aria-label": label }) as HTMLInputElement;
-    const w = num(p.w, "Width, mm"), hh = num(p.h, "Height, mm"), t = num(p.thickness, "Thickness, mm (optional)", "t");
-    t.title = "The stamp's thickness, optional: the 3D shows it, and a stamp too thick for the pockets is an error";
-    const set = (fn: (q: Pocket) => void) => commit((n) => {
-      const q = n.pockets.find((x) => x.id === p.id);
-      if (q) fn(q);
-    }, [p.id], false);
-    name.onchange = () => set((q) => (q.name = name.value));
-    w.onchange = () => Number(w.value) > 0 && set((q) => (q.w = Number(w.value)));
-    hh.onchange = () => Number(hh.value) > 0 && set((q) => (q.h = Number(hh.value)));
-    t.onchange = () => set((q) => (q.thickness = Math.max(0, Number(t.value) || 0)));
-    const del = h("button", { class: "chip-x", title: "Delete (Del)", "aria-label": `Delete ${p.name || "stamp"}` }, "×");
-    del.onclick = () => commit((n) => (n.pockets = n.pockets.filter((x) => x.id !== p.id)), []);
-    row.onclick = (e) => {
-      if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "BUTTON") return;
-      editor.select([p.id], e.shiftKey);
-    };
-    name.onfocus = () => editor.select([p.id]);
-    row.append(name, w, h("span", { class: "unit" }, "×"), hh, t, del);
-    list.append(row);
-  }
-  g2.append(list);
-  el.append(g2);
-
-  // problems and sheets: refreshed on their own after every build (renderCheck), so typing isn't interrupted
-  const g3 = h("section", { class: "group stamp-check" });
-  el.append(g3);
-  renderCheck(el, host, editor);
-  if (afterAdd) {
-    afterAdd = false;
-    nName.focus();
-  }
+  const g2 = h("section", { class: "group stamps" }, h("h3", {}),
+    h("div", { class: "row stamp-add" }, nName, nW, h("span", { class: "unit" }, "×"), nH, add),
+    h("div", { class: "hint row" }, "The stamp itself, as measured: 1 mm of air is added on every side."),
+    h("div", { class: "stamp-list" }));
+  el.replaceChildren(g1, g2, h("section", { class: "group stamp-check" }));
 }
 
-let afterAdd = false;       // this redraw follows an Add: a fresh add row, its name field focused for the next stamp
+/** A stamp's row: its name and size, editable; a click selects it on the board. */
+function stampRow(p: Pocket, host: StampHost, editor: BoardEditor): HTMLElement {
+  const row = h("div", { class: `stamp-row${editor.selected.has(p.id) ? " sel" : ""}`, "data-id": p.id });   // red: renderCheck
+  const name = h("input", { type: "text", value: p.name, spellcheck: "false", "aria-label": "Name" }) as HTMLInputElement;
+  const num = (v: number | undefined, label: string, ph = "") =>
+    h("input", { type: "number", min: 0, step: 0.5, value: v ? String(v) : "", placeholder: ph, class: "num", "aria-label": label }) as HTMLInputElement;
+  const w = num(p.w, "Width, mm"), hh = num(p.h, "Height, mm"), t = num(p.thickness, "Thickness, mm (optional)", "t");
+  t.title = "The stamp's thickness, optional: the 3D shows it, and a stamp too thick for the pockets is an error";
+  const set = (fn: (q: Pocket) => void) => commitWith(host, (n) => {
+    const q = n.pockets.find((x) => x.id === p.id);
+    if (q) fn(q);
+  }, [p.id]);
+  name.onchange = () => set((q) => (q.name = name.value));
+  w.onchange = () => Number(w.value) > 0 && set((q) => (q.w = Number(w.value)));
+  hh.onchange = () => Number(hh.value) > 0 && set((q) => (q.h = Number(hh.value)));
+  t.onchange = () => set((q) => (q.thickness = Math.max(0, Number(t.value) || 0)));
+  const del = h("button", { class: "chip-x", title: "Delete (Del)", "aria-label": `Delete ${p.name || "stamp"}` }, "×");
+  del.onclick = () => commitWith(host, (n) => (n.pockets = n.pockets.filter((x) => x.id !== p.id)), []);
+  row.onclick = (e) => {
+    if ((e.target as HTMLElement).tagName === "INPUT" || (e.target as HTMLElement).tagName === "BUTTON") return;
+    editor.select([p.id], e.shiftKey);
+  };
+  name.onfocus = () => editor.select([p.id]);
+  row.append(name, w, h("span", { class: "unit" }, "×"), hh, t, del);
+  return row;
+}
 
-/** The Check section only: problems (click to show them) and how the boards use the sheets. */
+/** What the build brings: Pocket boards' depths, the logos, the Check (problems - click to show them - and how the
+ *  boards use the sheets), the red rows. Runs after every build; it touches no field the user types into. */
 export function renderCheck(el: HTMLElement, host: StampHost, editor: BoardEditor) {
   const g3 = el.querySelector<HTMLElement>(".stamp-check");
-  const d = host.build()?.stampcase ?? null;
   if (!g3) return;
+  const c = host.params();
+  const b = host.build();
+  const d = b?.stampcase ?? null;
+  const boards = el.querySelector<HTMLElement>(".stamp-boards")!;
+  const thick = b?.info.thickness ?? 3.7;
+  if (boards.dataset.key !== `${c.pocket_boards} ${thick}`) {
+    boards.dataset.key = `${c.pocket_boards} ${thick}`;
+    boards.lastElementChild!.replaceWith(seg("Pocket boards", [1, 2, 3, 4].map((k): [number, string, string] =>
+      [k, String(k), `${k} pocket board${k > 1 ? "s" : ""}: pockets ${(k * thick).toFixed(1)} mm deep`]),
+    c.pocket_boards, (k) => commitWith(host, (n) => (n.pocket_boards = k))));
+  }
+  boards.querySelector(".hint")!.textContent = d ? `pockets ${d.depth.toFixed(1)} mm deep` : "";
+  const logos = d?.logos ?? [];
+  let logo = el.querySelector<HTMLElement>(".stamp-logo")!;
+  if (logo.dataset.logos !== logos.join("\n")) {
+    let next: HTMLElement;
+    if (logos.length) {
+      const sel = h("select", { "aria-label": "Logo" }) as HTMLSelectElement;
+      for (const f of logos) sel.append(h("option", { value: f }, f.replace(/\.svg$/i, "")));
+      sel.onchange = () => commitWith(host, (n) => (n.logo = sel.value));
+      next = h("label", { class: "row sel-row stamp-logo" }, h("span", {}, "Logo"), sel);
+    } else {
+      next = h("div", { class: "row hint stamp-logo" }, "No logo: the logos folder (C:\\Projects\\eating voltage Fonts\\logos) isn't reachable.");
+    }
+    next.dataset.logos = logos.join("\n");
+    logo.replaceWith(next);
+    logo = next;
+  }
+  const sel = logo.querySelector("select");
+  if (sel && sel !== document.activeElement) for (const o of sel.options) o.selected = o.value === c.logo;
   g3.replaceChildren(h("h3", {}, "Check"));
   if (!d) return;
   if (!d.problems.length) g3.append(h("div", { class: "row ok" }, "✓ Ready to cut"));
@@ -465,7 +505,6 @@ export class BoardEditor {
 
   // ---------------------------------------------------------------- the bar under the editor: the selection
   private renderBar() {
-    if (holdWhileTyping(this.bar, () => this.renderBar())) return;
     const d = this.data();
     const c = this.host.params();
     this.bar.hidden = !d || this.tab === "sheets" || this.root.hidden || !this.selected.size;
@@ -498,7 +537,7 @@ export class BoardEditor {
         btn(geo.placed ? "Auto place" : "placed automatically", "Let the app place it again", () => this.edit((n) => (n[k].placed = false))));
     }
     if (mags.length) kids.push(h("b", {}, `${mags.length} magnet${mags.length > 1 ? "s" : ""}`), btn("Delete", "Del", () => this.remove()));
-    this.bar.replaceChildren(...kids);
+    fillBar(this.bar, `${this.tab} ${sel.join(" ")}`, kids);
   }
 
   // ---------------------------------------------------------------- edits

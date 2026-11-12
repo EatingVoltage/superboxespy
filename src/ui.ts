@@ -156,27 +156,39 @@ export function toggle(label: string, title: string, on: boolean, set: (on: bool
   return b;
 }
 
-/** A field of `bar` the user types into. */
-const typingIn = (bar: HTMLElement, t: EventTarget | null) =>
-  t instanceof HTMLElement && bar.contains(t) && t.matches("textarea, input:not([type=checkbox], [type=radio], [type=range])");
-const held = new WeakSet<HTMLElement>();
+/** A field the user types into. */
+const typing = (t: Element | null): t is HTMLElement =>
+  t instanceof HTMLElement && t.matches("textarea, select, input:not([type=checkbox], [type=radio], [type=range])");
 
-/** True while one of the bar's text fields has the focus: a redraw now (a build landing) would pull the field out
- *  from under the user, and the keys meant for it would reach the editor (Backspace deletes the item). `redraw`
- *  runs instead once the focus moves on to anything but another of the bar's fields; leaving the window keeps it. */
-export function holdWhileTyping(bar: HTMLElement, redraw: () => void): boolean {
-  if (!typingIn(bar, document.activeElement)) return false;
-  if (!held.has(bar)) {
-    held.add(bar);
-    const done = (e: FocusEvent) => {
-      if (typingIn(bar, e.relatedTarget) || !document.hasFocus()) return;
-      bar.removeEventListener("focusout", done);
-      held.delete(bar);
-      redraw();
-    };
-    bar.addEventListener("focusout", done);
+/** Fill a bar with the selection's settings. While the user is in one of its fields and the bar still shows the same
+ *  thing (`key`: what's selected), that field stays - what's typed in it, its caret - and only what's around it is
+ *  drawn anew. A build landing then neither pulls the field from under the user (the keys meant for it would reach
+ *  the editor: Backspace deletes the item) nor holds back what the bar says about the build. The field is found in
+ *  the new drawing by its aria-label and takes that one's handlers, so they act on the selection as it is now. */
+export function fillBar(bar: HTMLElement, key: string, kids: (Node | string)[]) {
+  const field = document.activeElement;
+  const same = bar.dataset.key === key;
+  bar.dataset.key = key;
+  const nodes = kids.map((k) => (typeof k === "string" ? document.createTextNode(k) : k));
+  const label = field?.getAttribute("aria-label");
+  const top = same && typing(field) && label ? [...bar.children].find((c) => c.contains(field)) : undefined;
+  const sel = `[aria-label="${CSS.escape(label ?? "")}"]`;
+  const twinTop = top && nodes.find((n) => n instanceof Element && (n.matches(sel) || n.querySelector(sel)));
+  const twin = twinTop instanceof Element ? (twinTop.matches(sel) ? twinTop : twinTop.querySelector(sel)) : null;
+  if (!top || !twin || twin.tagName !== field!.tagName) {
+    bar.replaceChildren(...nodes);
+    return;
   }
-  return true;
+  for (const n of [...bar.childNodes]) if (n !== top) n.remove();
+  const i = nodes.indexOf(twinTop!);
+  top.before(...nodes.slice(0, i));
+  top.after(...nodes.slice(i + 1));
+  if (top !== field) top.className = (twinTop as Element).className;     // its holder's look (a missing value's red)
+  const f = field as HTMLElement, t = twin as HTMLElement;
+  f.onchange = t.onchange;
+  f.oninput = t.oninput;
+  f.onkeydown = t.onkeydown;
+  f.onfocus = t.onfocus;
 }
 
 /** A toolbar: its kids, a spacer, then what goes at the right end. */
