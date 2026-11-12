@@ -192,6 +192,20 @@ def keep_locked(sizes, layout, sheet):
     return keep
 
 
+def place(sizes, layout, sheet, noun="parts"):
+    """A build's layout, for every type: (placements, too_big, warnings, sheets [{"index", "offcut"}]). The hand-placed
+    parts in `layout` that still fit stay (keep_locked), the rest is packed around them; warnings: that some had to
+    move."""
+    locked = keep_locked(sizes, layout, sheet)
+    warnings = []
+    if layout and len(locked) < len([p for p in layout if p.get("part", -1) < len(sizes)]):
+        warnings.append("Some hand-placed %s no longer fit where they were and were packed again." % noun)
+    placements, too_big = pack(sizes, sheet, locked=locked)
+    n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
+    sheets = [{"index": n, "offcut": round(offcut(placements, sizes, sheet, n), 1)} for n in range(n_sheets)]
+    return placements, too_big, warnings, sheets
+
+
 # ------------------------------------------------------------------ rest pieces
 # The rest wood is cut free as rectangles once the parts are done (stampcaser, user 2026-10-24; every type since
 # .grill/stamp-case-merge.md): short cuts carry the parts' own edges out to the sheet's edges, on their own layer.

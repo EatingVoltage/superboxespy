@@ -52,6 +52,8 @@ from shapely.ops import unary_union
 from evlaser import lbrn, machine as M, svgpath, textures
 
 from . import lbrnart, svgart
+from .capture import coords_json
+from .export import rings
 from .stampcase import config as SC, shapes as SS
 
 X, Y, Z = np.eye(3)
@@ -94,10 +96,27 @@ class Face:
         return affinity.affine_transform(g, [a, b, c, d, *o])
 
 
+_found = {}      # find()'s faces by its inputs: api._render caches the parts, so a face edit finds the same faces again
+
+
 def find(parts, asm, t):
     """{role: Face} for the closed box: per role the biggest placed part whose engraved side looks that way and that
     is at least half in view (an inner guide behind a side wall isn't a face). A part the assembly could only place
-    mirrored (assembly._turn_not_mirror) is left out: it would have to be cut mirrored for its engraving to face out."""
+    mirrored (assembly._turn_not_mirror) is left out: it would have to be cut mirrored for its engraving to face out.
+    The faces are shared between calls with the same parts and assembly: nothing changes a Face once it's made."""
+    key = (id(parts), t, repr([(pl.get("group"), pl.get("kind"), pl.get("mirrored"), pl.get("m"))
+                               for pl in asm.get("parts", [])]), repr((asm.get("inside") or {}).get("lo")))
+    hit = _found.get(key)
+    if hit is not None and hit[0] is parts:      # the parts are held below, so their id can't be reused meanwhile
+        return hit[1]
+    out = _find(parts, asm, t)
+    if len(_found) > 8:
+        _found.clear()
+    _found[key] = (parts, out)
+    return out
+
+
+def _find(parts, asm, t):
     cands = {}
     for p, pl in zip(parts, asm.get("parts", [])):
         if (pl.get("group") == "loose" or pl.get("kind") != "wall" or pl.get("mirrored") or p.shape is None
@@ -211,9 +230,7 @@ def _logo(item, size, rot):
     art = lbrnart.load(path)
     if art.empty:
         raise ValueError("%s has nothing to engrave (bitmaps aren't)" % name)
-    x0, y0, x1, y1 = art.bounds
-    k = size / (y1 - y0) if y1 > y0 else size / max(x1 - x0, 1e-9)
-    fit = [k, 0, 0, k, -(x0 + x1) / 2 * k, -(y0 + y1) / 2 * k]
+    fit = svgart.fit(art.bounds, size)
     lines, fill = affinity.affine_transform(art.lines, fit), affinity.affine_transform(art.fill, fit)
     if rot:
         lines, fill = affinity.rotate(lines, rot, origin=(0, 0)), affinity.rotate(fill, rot, origin=(0, 0))
@@ -231,9 +248,7 @@ def _svg(item, size, rot):
     lines, rings = svgart.parse(item.get("svg") or "")
     if lines.is_empty:
         return MultiLineString()
-    x0, y0, x1, y1 = lines.bounds
-    k = size / (y1 - y0) if y1 > y0 else size / max(x1 - x0, 1e-9)
-    fit = [k, 0, 0, k, -(x0 + x1) / 2 * k, -(y0 + y1) / 2 * k]
+    fit = svgart.fit(lines.bounds, size)
     out = affinity.affine_transform(lines, fit)
     if item.get("style") == "hatch" and rings:
         region = affinity.affine_transform(svgart.area(rings), fit)
@@ -320,12 +335,26 @@ def place(item, face):
 
 
 def _outline_lines(polys):
-    return MultiLineString([r for q in lbrn._polys(polys) for r in [q.exterior, *q.interiors]]) if not polys.is_empty \
-        else MultiLineString()
+    return MultiLineString(rings(polys))
 
 
 def _round(g):
-    return [[[round(x, 2), round(y, 2)] for x, y in ls.coords] for ls in lbrn._lines(g)]
+    """Lines as [[x, y], ...] lists, for drawing."""
+    return coords_json(lbrn._lines(g), 2)
+
+
+def _failed(item, error, hole=True):
+    """An item's face info when it can't go on the face: red, with why."""
+    out = {"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "error": error}
+    if hole:
+        out["hole"] = True
+    return out
+
+
+def _lifted(got, dy):
+    """A placed hole (place's polygons, lines, bounds, fill) moved up by dy."""
+    poly, lines, (x0, y0, x1, y1), fill = got
+    return affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy), fill
 
 
 def decorate(parts, asm, faces_req, t, boards=None):
@@ -345,31 +374,25 @@ def decorate(parts, asm, faces_req, t, boards=None):
         # the holes first: an engraving across one is red
         cut = []
         board = (boards or {}).get(role)
-        for item in (it for it in reqs if it.get("kind") == "hole" and face.inside):
-            items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
-                              "error": "a hole goes through: put it on the outside"})
-        for item in (it for it in reqs if it.get("kind") == "hole" and not face.inside):
+        for item in (it for it in reqs if it.get("kind") == "hole"):
+            if face.inside:
+                items_out.append(_failed(item, "a hole goes through: put it on the outside"))
+                continue
             got = place(item, face)
             if not got:
                 continue
             if item.get("shape") == "notch":              # its centre on the top or bottom edge, by the anchor's row
                 row = (item.get("anchor") or "c")[0]
                 if row not in "tb":
-                    items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
-                                      "error": "drag it onto the top or bottom edge"})
+                    items_out.append(_failed(item, "drag it onto the top or bottom edge"))
                     continue
-                poly, lines, (x0, y0, x1, y1), _fill = got
-                dy = (face.h if row == "t" else 0.0) - (y0 + y1) / 2
-                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy), _fill)
+                got = _lifted(got, (face.h if row == "t" else 0.0) - (got[2][1] + got[2][3]) / 2)
             if item.get("board"):                      # an edge connector: at the board, only its x is the item's
                 if face.floor is None or not isinstance(board, (int, float)):
-                    items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "hole": True,
-                                      "error": "set the board's height on this wall" if face.floor is not None
-                                      else "only on a wall of a box with a floor"})
+                    items_out.append(_failed(item, "set the board's height on this wall" if face.floor is not None
+                                             else "only on a wall of a box with a floor"))
                     continue
-                poly, lines, (x0, y0, x1, y1), _fill = got
-                dy = face.floor + board + float(item.get("lift", -EDGE_AIR)) - y0
-                got = (affinity.translate(poly, 0, dy), lines, (x0, y0 + dy, x1, y1 + dy), _fill)
+                got = _lifted(got, face.floor + board + float(item.get("lift", -EDGE_AIR)) - got[2][1])
             cut.append((item, got[0], got[2]))
         here = []
         for item, poly, bounds in cut:
@@ -396,7 +419,7 @@ def decorate(parts, asm, faces_req, t, boards=None):
             try:
                 got = place(item, face)
             except ValueError as e:                     # an imported file that isn't SVG, a logo that's gone
-                items_out.append({"id": item.get("id"), "bounds": None, "bad": True, "lines": [], "error": str(e)})
+                items_out.append(_failed(item, str(e), hole=False))
                 continue
             if got is None:
                 items_out.append({"id": item.get("id"), "bounds": None, "bad": False, "lines": []})
@@ -506,23 +529,13 @@ def show_fixed(info, faces, deco):
 
 def _rings(g):
     """Polygon rings as [[x, y], ...] lists (outer rings and holes alike), for drawing."""
-    if g is None or g.is_empty:
-        return []
-    polys = list(g.geoms) if hasattr(g, "geoms") else [g]
-    return [[[round(x, 2), round(y, 2)] for x, y in r.coords] for q in polys if isinstance(q, Polygon)
-            for r in [q.exterior, *q.interiors]]
+    return coords_json(rings(g), 2)
 
 
 def logos():
     """The logos folder's logos on this PC, .svg and .lbrn2 (serve.py hands them over; none without it). The stamp
     case lists its own: SVGs only."""
-    names = set()
-    for d in SC.LOGO_DIRS:
-        try:
-            names.update(f for f in os.listdir(d) if f.lower().endswith(LOGO_KINDS))
-        except OSError:
-            pass
-    return sorted(names, key=str.lower)
+    return SS.logo_files(LOGO_KINDS, key=str.lower)
 
 
 PREVIEW = 0.004                  # simplify the library's previews by this much of the logo's size
@@ -530,21 +543,21 @@ PREVIEW = 0.004                  # simplify the library's previews by this much 
 
 def _d(g, close):
     """SVG path data of lines (or of polygons' rings, closed), y up as drawn."""
-    rings = [r for q in lbrn._polys(g) for r in [q.exterior, *q.interiors]] if close else lbrn._lines(g)
-    return "".join("M" + "L".join("%.2f %.2f" % c for c in r.coords) + ("Z" if close else "") for r in rings)
+    return "".join("M" + "L".join("%.2f %.2f" % c for c in r.coords) + ("Z" if close else "")
+                   for r in (rings(g) if close else lbrn._lines(g)))
 
 
 def library():
     """The logo library for the face editor's Add logo: per logo its file, its size as drawn (w, h, mm), whether it
     has filled shapes, and a preview (path data of its strokes and of its filled areas, y up); a file that can't be
-    read comes with its error instead. The worker has just copied the folder again: SVGs are read afresh too."""
-    SS._logo_raw.cache_clear()
+    read comes with its error instead. Files read before are read again when they changed (the worker has just copied
+    the folder again)."""
     out = []
     for name in logos():
         e = {"logo": name, "label": os.path.splitext(name)[0]}
         try:
             if name.lower().endswith(".svg"):
-                lines, fill = SS._logo_raw(SS.logo_path(name)), MultiPolygon()
+                lines, fill = SS.logo_raw(SS.logo_path(name)), MultiPolygon()
             else:
                 art = lbrnart.load(SS.logo_path(name))
                 lines, fill = art.lines, art.fill

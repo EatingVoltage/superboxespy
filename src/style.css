@@ -385,7 +385,6 @@ button.toggle[aria-pressed=true] { border-color: var(--accent); color: var(--acc
 .stamp-row input[type=text] { flex: 1; min-width: 0; }
 .stamp-row.sel { border-color: var(--accent); background: rgba(242, 179, 61, .08); }
 .stamp-row.bad input[type=text] { color: var(--bad); }
-.btn-row { display: flex; gap: 6px; }
 .problem { display: block; width: 100%; text-align: left; margin: 0 0 4px; white-space: normal; line-height: 1.35; }
 .problem.error { border-color: #6b2a38; color: #ffb3c1; }
 .problem.warning { border-color: #6b5320; color: #f5d9a0; }
@@ -403,7 +402,6 @@ button.toggle[aria-pressed=true] { border-color: var(--accent); color: var(--acc
 .pose-ctl[hidden] { display: none; }
 .play { width: 28px; padding: 3px 0; text-align: center; }
 .play[aria-pressed=true], .play-seq[aria-pressed=true] { border-color: var(--accent); color: var(--accent); }
-.dim-toggle input { accent-color: var(--accent); margin: 0; }
 .dim-layer { position: absolute; inset: 0; pointer-events: none; }
 .dim {
   font: 700 12px/1 var(--ui); font-variant-numeric: tabular-nums; color: var(--accent); white-space: nowrap;

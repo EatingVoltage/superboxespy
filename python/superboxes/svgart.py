@@ -2,7 +2,11 @@
 its closed shapes as areas for a hatch. The SVG text travels inside the box file, so a box stands on its own.
 
 Paths and the basic shapes (rect, circle, ellipse, line, polyline, polygon) are drawn; text, images and clip paths
-aren't (convert text to paths before importing). Y points up, in the SVG's own units; faces.py scales the result."""
+aren't (convert text to paths before importing). Y points up, in the SVG's own units; faces.py scales the result.
+
+The transform helpers here are shared: the stamp case's logo (stampcase/shapes.py) and LightBurn's XForms
+(lbrnart.py) compose them the same way."""
+import math
 import re
 import xml.etree.ElementTree as ET
 from functools import lru_cache
@@ -11,10 +15,45 @@ from shapely.geometry import LineString, MultiLineString, Polygon
 
 from evlaser import svgpath
 
-from .stampcase.shapes import _SKIP, _mul, _parse_transform
-
 _NUM = re.compile(r"[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?")
 _UNITS = {"mm": 1.0, "cm": 10.0, "in": 25.4, "pt": 25.4 / 72, "pc": 25.4 / 6, "px": 25.4 / 96, "": 25.4 / 96}
+_TRANSFORM = re.compile(r"(matrix|translate|scale|rotate)\s*\(([^)]*)\)")
+SKIP = ("defs", "symbol", "marker", "pattern", "metadata", "namedview", "clipPath", "mask", "title", "desc")
+
+
+def mul(a, b):
+    """The affine [a b c d e f] (x -> (a x + c y + e, b x + d y + f)) of a after b."""
+    return [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
+            a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
+            a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]]
+
+
+def parse_transform(s):
+    """An SVG transform attribute as one affine [a b c d e f]."""
+    m = [1, 0, 0, 1, 0, 0]
+    for kind, args in _TRANSFORM.findall(s or ""):
+        v = [float(t) for t in re.split(r"[\s,]+", args.strip()) if t]
+        if kind == "matrix":
+            t = v
+        elif kind == "translate":
+            t = [1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0]
+        elif kind == "scale":
+            t = [v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0]
+        else:
+            a = math.radians(v[0])
+            t = [math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0, 0]
+            if len(v) == 3:
+                cx, cy = v[1], v[2]
+                t = mul(mul([1, 0, 0, 1, cx, cy], t), [1, 0, 0, 1, -cx, -cy])
+        m = mul(m, t)
+    return m
+
+
+def fit(bounds, size):
+    """The affine that scales art with these bounds to `size` tall (flat art: as wide) and centres it on (0, 0)."""
+    x0, y0, x1, y1 = bounds
+    k = size / (y1 - y0) if y1 > y0 else size / max(x1 - x0, 1e-9)
+    return [k, 0, 0, k, -(x0 + x1) / 2 * k, -(y0 + y1) / 2 * k]
 
 
 def _f(el, name, default=0.0):
@@ -58,9 +97,9 @@ def parse(text):
 
     def walk(el, m):
         tag = el.tag.split("}")[-1]
-        if tag in _SKIP or tag in ("text", "image", "style", "script"):
+        if tag in SKIP or tag in ("text", "image", "style", "script"):
             return
-        m = _mul(m, _parse_transform(el.get("transform")))
+        m = mul(m, parse_transform(el.get("transform")))
         d = el.get("d") if tag == "path" else _shape_d(el, tag)
         if d:
             for sub in svgpath.parse(d):

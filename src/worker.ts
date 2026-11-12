@@ -22,6 +22,7 @@ const baseURL = new Promise<string>((resolve) => (gotBase = resolve));
 async function start(): Promise<PyodideAPI> {
   const base = new URL(await baseURL);
   const pyodideURL = new URL("pyodide/", base).href;
+  const logos = fetchLogos(base);           // over the wire while Python loads
   report("Loading Python…");
   const mod = await import(/* @vite-ignore */ pyodideURL + "pyodide.mjs");
   const py: PyodideAPI = await mod.loadPyodide({ indexURL: pyodideURL });
@@ -31,28 +32,39 @@ async function start(): Promise<PyodideAPI> {
   const zip = await (await fetch(new URL("py.zip", base).href, { cache: "no-cache" })).arrayBuffer();
   py.unpackArchive(zip, "zip", { extractDir: "/app" });
   py.runPython("import sys; sys.path.insert(0, '/app'); from superboxes import api");
-  await copyLogos(py, base);
+  writeLogos(py, await logos);
   report("ready");
   return py;
 }
 
 /** The house logos, .svg and LightBurn .lbrn2, for the face editor's library and the stamp case: serve.py hands them
  *  over from Samuel's logos folder (they're private and never ship with the app). Under `npm run dev`, or without
- *  the folder, there are none and a case simply has no logo. Copied again each time the library opens
+ *  the folder, there are none (null) and a case simply has no logo. Copied again each time the library opens
  *  (.grill/logo-library.md: a box links its logo by name, so a changed file shows without a restart). */
-async function copyLogos(py: PyodideAPI, base: URL) {
+async function fetchLogos(base: URL): Promise<{ names: string[]; files: [string, Uint8Array][] } | null> {
   try {
     const res = await fetch(new URL("api/logos", base).href, { cache: "no-store" });
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const names: string[] = await res.json();
+    const files = await Promise.all(names.map(async (n): Promise<[string, Uint8Array] | null> => {
+      const r = await fetch(new URL("api/logos/" + encodeURIComponent(n), base).href, { cache: "no-store" });
+      return r.ok ? [n, new Uint8Array(await r.arrayBuffer())] : null;
+    }));
+    return { names, files: files.filter((f): f is [string, Uint8Array] => !!f) };
+  } catch {
+    return null;
+  }
+}
+
+/** Python's /logos as the folder is: files no longer there go, the others are written anew. */
+function writeLogos(py: PyodideAPI, logos: Awaited<ReturnType<typeof fetchLogos>>) {
+  if (!logos) return;
+  try {
     py.FS.mkdirTree("/logos");
     for (const old of py.FS.readdir("/logos")) {
-      if (old !== "." && old !== ".." && !names.includes(old)) py.FS.unlink("/logos/" + old);
+      if (old !== "." && old !== ".." && !logos.names.includes(old)) py.FS.unlink("/logos/" + old);
     }
-    await Promise.all(names.map(async (n) => {
-      const r = await fetch(new URL("api/logos/" + encodeURIComponent(n), base).href, { cache: "no-store" });
-      if (r.ok) py.FS.writeFile("/logos/" + n, new Uint8Array(await r.arrayBuffer()));
-    }));
+    for (const [n, data] of logos.files) py.FS.writeFile("/logos/" + n, data);
   } catch {
     /* no logos */
   }
@@ -68,7 +80,7 @@ self.onmessage = async (ev: MessageEvent<{ id: number; fn: string; req: unknown;
   const { id, fn, req } = ev.data;
   try {
     const py = await ready;
-    if (fn === "logo_library") await copyLogos(py, new URL(await baseURL));
+    if (fn === "logo_library") writeLogos(py, await fetchLogos(new URL(await baseURL)));
     py.globals.set("_fn", fn);
     py.globals.set("_req", JSON.stringify(req ?? {}));
     const result = py.runPython("api.call(_fn, _req)") as string;

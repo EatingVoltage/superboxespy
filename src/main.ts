@@ -15,6 +15,11 @@ import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placeme
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
 // ------------------------------------------------------------------ state
+/** A new box's output options (a fresh object each time: they're edited in place). */
+function defaultOptions(): Options {
+  return { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true };
+}
+
 const S = {
   catalog: [] as { name: string; short: string; description: string; group: string }[],
   boxesVersion: "",
@@ -31,7 +36,7 @@ const S = {
   faces: {} as Faces,            // the face editor's items per face (not for the stamp case: its boards are its faces)
   boards: {} as Record<string, number>,   // per wall: the board's top above the inside floor, mm
   home: null as string | null,   // the box's own file on disk (serve.py): Save and the exports go beside it
-  options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true } as Options,
+  options: defaultOptions(),
   notes: "",
   build: null as Build | null,
   placements: [] as Placement[],
@@ -168,16 +173,22 @@ function renderMaterial() {
     h("span", { title: m.burn_x != null ? "Per-axis kerf compensation: your spot cuts wider in one axis" : "" },
       "Burn ", h("b", {}, burnText), " ", chip)), calibrateRow());
   if (S.compOverride || S.thicknessOverride != null) {
-    const use = h("button", {}, "Use the material profile instead");
-    use.onclick = () => {
-      S.compOverride = S.thicknessOverride = null;
-      changed(true);
-      renderMaterial();
-    };
-    el.append(h("div", { class: "notice" }, "This box was saved with other material values than your current profile. ", use));
+    el.append(overrideNotice("box"));
   } else if (m.status === "default") {
     el.append(h("div", { class: "notice" }, "Burn 0.10 is boxes.py's default, never measured on your Falcon2. Cut the calibration sheets (Calibrate…) before cutting boxes you care about."));
   }
+}
+
+/** A file saved with other material values than the profile's: say so, with a way back to the profile. (A stamp
+ *  case only ever has a kerf override, any other box only a burn one: clearing all three clears what's there.) */
+function overrideNotice(what: "box" | "case") {
+  const use = h("button", {}, "Use the material profile instead");
+  use.onclick = () => {
+    S.compOverride = S.thicknessOverride = S.kerfOverride = null;
+    changed(true);
+    renderMaterial();
+  };
+  return h("div", { class: "notice" }, `This ${what} was saved with other material values than your current profile. `, use);
 }
 
 /** Calibration opens from here: it fills the work area until Back. */
@@ -195,13 +206,7 @@ function renderStampMaterial(el: HTMLElement, thickness: number) {
       h("span", { class: `chip-status ${S.kerfOverride ? "kerf" : k ? "measured" : "default"}` }, S.kerfOverride ? "from file" : k ? "measured" : "unconfirmed"))),
     calibrateRow());
   if (S.kerfOverride || S.thicknessOverride != null) {
-    const use = h("button", {}, "Use the material profile instead");
-    use.onclick = () => {
-      S.kerfOverride = S.thicknessOverride = null;
-      changed(true);
-      renderMaterial();
-    };
-    el.append(h("div", { class: "notice" }, "This case was saved with other material values than your current profile. ", use));
+    el.append(overrideNotice("case"));
   } else if (!k) {
     el.append(h("div", { class: "notice" }, "The kerf of this material hasn't been measured: cut the 00a kerf test first (Calibrate…). Until then the case uses 0.33 / 0.26."));
   }
@@ -581,9 +586,10 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
     ? cm.thickness : null;
   S.sheet = c.sheet ?? A3;
   const o = c.options as Partial<Options> | undefined;   // older files may lack fields
+  const d = defaultOptions();
   S.options = {
-    labels_engrave: o?.labels_engrave ?? false, mark: { enabled: true, text: null, part: null, ...(o?.mark ?? {}) },
-    rest_cuts: o?.rest_cuts ?? true,
+    labels_engrave: o?.labels_engrave ?? d.labels_engrave, mark: { ...d.mark, ...(o?.mark ?? {}) },
+    rest_cuts: o?.rest_cuts ?? d.rest_cuts,
   };
   S.notes = c.notes ?? "";
   S.faces = isStamp() ? {} : structuredClone(c.faces ?? {});
@@ -612,8 +618,7 @@ async function newBox(gen: string, name?: string, params: Record<string, any> = 
     app: "superboxespy", version: 1, name: name ?? gen.toLowerCase(), generator: gen, boxes_version: S.boxesVersion,
     params: { ...defaults(groups), ...params },
     material: { key: S.materialKey, thickness: profile().thickness, fit: S.fit, burn: material().burn },
-    sheet: S.sheet, layout: null, options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true },
-    notes: "", saved: "",
+    sheet: S.sheet, layout: null, options: defaultOptions(), notes: "", saved: "",
   }, true);
 }
 
@@ -986,8 +991,7 @@ async function thumbnailBuild(name: string): Promise<Build | null> {
     params = packed.params;
   }
   const r = await py.call<Build>("build", {
-    generator: name, params, material: material(), sheet: S.sheet, layout: null,
-    options: { labels_engrave: false, mark: { enabled: true, text: null, part: null }, rest_cuts: true },
+    generator: name, params, material: material(), sheet: S.sheet, layout: null, options: defaultOptions(),
   });
   return r.ok ? r : null;
 }
@@ -1005,7 +1009,8 @@ async function openRecent(r: ReturnType<typeof cfg.recent>[number]) {
   if (r.home && canHome) {
     // boxes saved before 2026-11-07 were .box.json; renamed to .sbox since
     const sbox = r.home.replace(/\.box\.json$/i, files.BOX_EXT);
-    if (sbox !== r.home && (await files.readHome(sbox)).ok && (await openHome(sbox))) return;
+    const s = sbox !== r.home ? await files.readHome(sbox) : null;
+    if (s?.ok && (await openHome(sbox, s.text))) return;
     if (await openHome(r.home)) return;
   }
   await load(r.config);

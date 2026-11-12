@@ -12,8 +12,10 @@ from shapely.geometry import Point
 from shapely.ops import unary_union
 
 from evlaser import geom as G
+from evlaser import lbrn
 from evlaser import machine as M
 
+from .. import export as X
 from ..capture import _poly_json, _r
 from . import config as C
 from . import shapes as S
@@ -22,29 +24,14 @@ KERF = {"outline": S.kerf_outline, "hole": S.kerf_hole}
 CIRCLE_SEGS = 16   # quad_segs for magnet holes in the 3D and sheet view (LightBurn gets true circles)
 
 
-def _rings(g):
-    polys = list(g.geoms) if hasattr(g, "geoms") else [g]
-    for p in polys:
-        if p.is_empty:
-            continue
-        yield p.exterior
-        yield from p.interiors
-
-
-def _lines(g):
-    if g.is_empty:
-        return []
-    return list(g.geoms) if hasattr(g, "geoms") else [g]
-
-
 def _polylines(items):
     """(points (n, 2), closed) of every ring and line of the items, as the laser draws them."""
     for _role, _layer, kind, *data in items:
         if kind == "poly":
-            for ring in _rings(data[0]):
+            for ring in X.rings(data[0]):
                 yield np.asarray(ring.coords)[:, :2], True
         elif kind == "lines":
-            for ls in _lines(data[0]):
+            for ls in lbrn._lines(data[0]):
                 if len(ls.coords) > 1:
                     yield np.asarray(ls.coords)[:, :2], False
         elif kind == "circle":
@@ -114,15 +101,7 @@ class BoardPart:
         e = G.Part(self.name)
         for _role, layer, kind, *data in self.items:
             e.add(layer, kind, *data)
-        rot = pl["rot"] % 360
-        if rot == 90:
-            e = e.transformed(90, pl["x"] + self.h, pl["y"])
-        elif rot == 180:
-            e = e.transformed(180, pl["x"] + self.w, pl["y"] + self.h)
-        elif rot == 270:
-            e = e.transformed(270, pl["x"], pl["y"] + self.w)
-        else:
-            e = e.transformed(0, pl["x"], pl["y"])
+        e = X.placed(e, self, pl)
         roles = [it[0] for it in self.items]
         e.items = [(it[0], it[1], KERF[r](it[2])) if r in KERF else it for r, it in zip(roles, e.items)]
         return e

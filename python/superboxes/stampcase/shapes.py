@@ -1,28 +1,24 @@
 """Geometry of one case: pocket holes with their finger notch, name strips, the board with the eV cut corner,
 per-axis kerf, eV Sans text and the eatingVoltage logo. Shapely, mm, Y up."""
-import math
 import os
-import re
 import xml.etree.ElementTree as ET
 from functools import lru_cache
 
+import shapely
 from shapely import affinity
 from shapely.geometry import LineString, MultiLineString, Point, Polygon, box
 from shapely.ops import unary_union
 
-from evlaser import svgpath, typeset
+from evlaser import geom as G, svgpath, typeset
 
 from ..kerf import offset_region
+from ..svgart import SKIP, fit, mul, parse_transform
 from . import config as C
 
 Q = 16  # quad_segs: arcs as smooth as the old file's Béziers
 
 
 # ------------------------------------------------------------------ pockets
-def rounded_rect(x, y, w, h, r):
-    return box(x, y, x + w, y + h).buffer(-r, quad_segs=Q).buffer(r, quad_segs=Q)
-
-
 def notch_centre(p, air):
     """Where the notch's centre sits along its side, measured from the side's low end."""
     return _notch_centre(*p.hole_size(air), p.notch_side, p.notch_end)
@@ -41,7 +37,7 @@ def hole(p, air):
 
 @lru_cache(maxsize=4096)
 def _hole0(hw, hh, side, end):
-    rect = rounded_rect(0, 0, hw, hh, C.POCKET_R)
+    rect = G.rounded_rect(hw, hh, C.POCKET_R)
     c = _notch_centre(hw, hh, side, end)
     centre, (a, b) = {
         "right": ((hw, c), (C.NOTCH_OUT, C.NOTCH_HALF)),
@@ -66,9 +62,9 @@ def strip(p, air, depth=C.LABEL_STRIP):
     }[p.label_side()]
 
 
-def footprint(p, air):
-    """Hole + name strip: roughly what a pocket claims on the top board."""
-    return unary_union([hole(p, air), strip(p, air)])
+def footprint_bounds(p, air):
+    """The bounds of hole + name strip, roughly what a pocket claims on the top board, without building their union."""
+    return tuple(shapely.total_bounds([hole(p, air), strip(p, air)]).tolist())
 
 
 # ------------------------------------------------------------------ board
@@ -135,44 +131,16 @@ def _text0(s, cap, face, rot):
 
 
 # ------------------------------------------------------------------ logo
-_TRANSFORM = re.compile(r"(matrix|translate|scale|rotate)\s*\(([^)]*)\)")
-_SKIP = ("defs", "symbol", "marker", "pattern", "metadata", "namedview", "clipPath", "mask", "title", "desc")
-
-
-def _parse_transform(s):
-    m = [1, 0, 0, 1, 0, 0]
-    for kind, args in _TRANSFORM.findall(s or ""):
-        v = [float(t) for t in re.split(r"[\s,]+", args.strip()) if t]
-        if kind == "matrix":
-            t = v
-        elif kind == "translate":
-            t = [1, 0, 0, 1, v[0], v[1] if len(v) > 1 else 0]
-        elif kind == "scale":
-            t = [v[0], 0, 0, v[1] if len(v) > 1 else v[0], 0, 0]
-        else:
-            a = math.radians(v[0])
-            t = [math.cos(a), math.sin(a), -math.sin(a), math.cos(a), 0, 0]
-            if len(v) == 3:
-                cx, cy = v[1], v[2]
-                t = _mul(_mul([1, 0, 0, 1, cx, cy], t), [1, 0, 0, 1, -cx, -cy])
-        m = _mul(m, t)
-    return m
-
-
-def _mul(a, b):
-    return [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
-            a[0] * b[2] + a[2] * b[3], a[1] * b[2] + a[3] * b[3],
-            a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]]
-
-
-def logo_files():
+def logo_files(kinds=(".svg",), key=None):
+    """The logos folders' files ending in one of `kinds`, sorted (by `key`). The stamp case takes SVGs only; the face
+    editor's library .lbrn2 as well (faces.logos)."""
     names = set()
     for d in C.LOGO_DIRS:
         try:
-            names.update(f for f in os.listdir(d) if f.lower().endswith(".svg"))
+            names.update(f for f in os.listdir(d) if f.lower().endswith(kinds))
         except OSError:
             pass
-    return sorted(names)
+    return sorted(names, key=key)
 
 
 def logo_path(name):
@@ -180,17 +148,23 @@ def logo_path(name):
     return next((p for p in (os.path.join(d, name) for d in C.LOGO_DIRS) if os.path.exists(p)), None)
 
 
-@lru_cache(maxsize=None)
-def _logo_raw(path):
-    """Every drawn path of a line-art SVG as polylines, Y up, in the SVG's own units."""
+def logo_raw(path):
+    """Every drawn path of a line-art SVG as polylines, Y up, in the SVG's own units; read again when the file
+    changes (as lbrnart.load)."""
+    st = os.stat(path)
+    return _logo_raw(path, (st.st_mtime_ns, st.st_size))
+
+
+@lru_cache(maxsize=32)
+def _logo_raw(path, _stamp):
     root = ET.parse(path).getroot()
     lines = []
 
     def walk(el, m):
         tag = el.tag.split("}")[-1]
-        if tag in _SKIP:
+        if tag in SKIP:
             return
-        m = _mul(m, _parse_transform(el.get("transform")))
+        m = mul(m, parse_transform(el.get("transform")))
         if tag == "path" and el.get("d"):
             for sub in svgpath.parse(el.get("d")):
                 pts = [(m[0] * x + m[2] * y + m[4], -(m[1] * x + m[3] * y + m[5])) for x, y in svgpath.flatten(sub, 10)]
@@ -210,12 +184,10 @@ def logo(name, cx, cy, height, rot=0):
     path = logo_path(name)
     if not path:
         return MultiLineString()
-    g = _logo_raw(path)
+    g = logo_raw(path)
     if g.is_empty:
         return g
-    x0, y0, x1, y1 = g.bounds
-    k = height / (y1 - y0)
-    g = affinity.affine_transform(g, [k, 0, 0, k, -(x0 + x1) / 2 * k, -(y0 + y1) / 2 * k])
+    g = affinity.affine_transform(g, fit(g.bounds, height))
     if rot:
         g = affinity.rotate(g, rot, origin=(0, 0))
     return affinity.translate(g, cx, cy)
@@ -225,5 +197,5 @@ def logo_aspect(name):
     path = logo_path(name)
     if not path:
         return 2.5
-    x0, y0, x1, y1 = _logo_raw(path).bounds
+    x0, y0, x1, y1 = logo_raw(path).bounds
     return (x1 - x0) / (y1 - y0)

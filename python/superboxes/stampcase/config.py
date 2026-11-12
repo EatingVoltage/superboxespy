@@ -81,12 +81,8 @@ MARK_CAP = 3.0           # maker's mark (eVlaser)
 LOGO_PER_CAP = 1.6       # logo height per cap height of the text next to it
 BLOCK_WOOD = 1.0         # least wood between a text block and anything else
 
-# boards share a sheet when they fit (sheets.py, user 2026-10-24), eVlaser's EDGE to the sheet edges and GAP apart.
-# The rest wood is cut free with short cuts along the boards' own edges, so it falls apart into rectangles without
-# any extra strip (user 2026-10-24); on their own layer, run after the boards
-FRAME_LAYER = 7          # the first case's extra-cut layer (C07, cut values, ran after C02)
-FRAME_MIN_PIECE = 10.0   # a rest piece narrower than this isn't cut free
+# boards share a sheet when they fit (sheets.py, user 2026-10-24), eVlaser's EDGE to the sheet edges and GAP apart;
+# the rest wood is cut free by the shared superboxes/sheets.py (FRAME_*)
 SHEET_HINT = 20.0        # the GUI points out a board this much smaller that would save a sheet
-FRAME_OVERSHOOT = 2.0    # past the sheet's right edge, so the cut goes through it
 
 SNAP = 0.5               # GUI drag grid

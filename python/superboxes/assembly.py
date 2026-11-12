@@ -765,15 +765,34 @@ def _turn_not_mirror(p, pl, tol=1e-3):
     m = np.asarray(pl["m"], float).reshape(3, 4)
     if np.linalg.det(m[:, :3]) > 0:
         return
+    flip = _symmetry(p, tol)
+    if flip is None:
+        pl["mirrored"] = True
+        return
+    sx, sy = flip
     x0, y0, x1, y1 = p.shape.bounds
-    for sx, sy in ((-1, 1), (1, -1)):
-        flip = affinity.scale(p.shape, sx, sy, origin=((x0 + x1) / 2, (y0 + y1) / 2))
-        if not p.children and flip.symmetric_difference(p.shape).area < tol * p.shape.area:
-            s = np.array([[sx, 0, 0, x0 + x1 if sx < 0 else 0], [0, sy, 0, y0 + y1 if sy < 0 else 0],
-                          [0, 0, 1, 0], [0, 0, 0, 1]], float)
-            pl["m"] = [round(float(v), 5) for v in (np.vstack([m, [0, 0, 0, 1]]) @ s)[:3].ravel()]
-            return
-    pl["mirrored"] = True
+    s = np.array([[sx, 0, 0, x0 + x1 if sx < 0 else 0], [0, sy, 0, y0 + y1 if sy < 0 else 0],
+                  [0, 0, 1, 0], [0, 0, 0, 1]], float)
+    pl["m"] = [round(float(v), 5) for v in (np.vstack([m, [0, 0, 0, 1]]) @ s)[:3].ravel()]
+
+
+def _symmetry(p, tol):
+    """(sx, sy): the reflection about the part's middle, across x (-1, 1) or y (1, -1), that maps it onto itself; None
+    when neither does (or pieces sit in its holes). Kept on the part for its shape: the parts are cached between builds
+    (api._render), and testing them again was most of a big box's assembly, every build (2026-11-12)."""
+    got = getattr(p, "_symmetry", None)
+    if got is not None and got[0] is p.shape and got[1] == tol:
+        return got[2]
+    found = None
+    if not p.children:
+        x0, y0, x1, y1 = p.shape.bounds
+        for sx, sy in ((-1, 1), (1, -1)):
+            flip = affinity.scale(p.shape, sx, sy, origin=((x0 + x1) / 2, (y0 + y1) / 2))
+            if flip.symmetric_difference(p.shape).area < tol * p.shape.area:
+                found = (sx, sy)
+                break
+    p._symmetry = (p.shape, tol, found)
+    return found
 
 
 def assemble(name, parts, t, placements=None, sheet_w=297.0, attrs=None):

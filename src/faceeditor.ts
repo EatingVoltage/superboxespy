@@ -13,17 +13,12 @@
 // The toolbar over the face adds things (Text, Logo, SVG…, Hole ▾) and picks the side; its ? card holds the keys.
 // The bar under the face shows only the selected item's settings (.grill/ui-toolbars-menus.md).
 
+import { openFile } from "./files";
 import { h } from "./params";
 import { call } from "./py";
+import { clientToMM, insideRing, ringsD, svgEl } from "./sheetview";
 import { DRAG_PX, btn, fillToolbar, helpButton, helpCard, holdWhileTyping, menuButton, seg, toggle, type MenuItem } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
-
-const NS = "http://www.w3.org/2000/svg";
-const svg = (tag: string, attrs: Record<string, any> = {}) => {
-  const el = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
-  return el;
-};
 
 export type Faces = Record<string, FaceItem[]>;
 
@@ -37,9 +32,8 @@ export interface FaceHost {
   refresh(): void;             // ask Python again, nothing changed here (a logo file may have)
 }
 
-const ORDER = ["top", "front", "back", "left", "right", "bottom"];
 // Every face the closed box has: Python leaves out a face only a mirrored cut could decorate (assembly).
-const READY = new Set(ORDER);
+const ORDER = ["top", "front", "back", "left", "right", "bottom"];
 const TITLE: Record<string, string> = { top: "Top", front: "Front", back: "Back", left: "Left", right: "Right", bottom: "Bottom" };
 const ANCHOR_NAME: Record<string, string> = {
   tl: "top left", t: "top", tr: "top right", l: "left", c: "centre", r: "right", bl: "bottom left", b: "bottom", br: "bottom right",
@@ -64,22 +58,28 @@ function readLibrary(): Promise<LogoEntry[]> {
 function logoPreview(e: LogoEntry): SVGSVGElement {
   const [x0, y0, x1, y1] = e.box ?? [0, 0, 1, 1];
   const pad = 0.04 * Math.max(x1 - x0, y1 - y0);
-  const s = svg("svg", { class: "lib-art", viewBox: `${x0 - pad} ${-y1 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`,
+  const s = svgEl("svg", { class: "lib-art", viewBox: `${x0 - pad} ${-y1 - pad} ${x1 - x0 + 2 * pad} ${y1 - y0 + 2 * pad}`,
     "aria-hidden": "true" }) as SVGSVGElement;
-  const g = svg("g", { transform: "scale(1 -1)" });
-  if (e.fill) g.append(svg("path", { d: e.fill, class: "lib-fill", "fill-rule": "evenodd" }));
-  if (e.lines) g.append(svg("path", { d: e.lines, class: "lib-line" }));
+  const g = svgEl("g", { transform: "scale(1 -1)" });
+  if (e.fill) g.append(svgEl("path", { d: e.fill, class: "lib-fill", "fill-rule": "evenodd" }));
+  if (e.lines) g.append(svgEl("path", { d: e.lines, class: "lib-line" }));
   s.append(g);
   return s;
 }
 
+/** An anchor's column (l, c, r) and row (t, c, b). */
+const colRow = (anchor: string) =>
+  ["lr".includes(anchor.slice(-1)) ? anchor.slice(-1) : "c", "tb".includes(anchor[0]) ? anchor[0] : "c"];
+
 /** The anchor's point on a rectangle [x0, y0, x1, y1] (python faces._spot). */
 function spot(r: number[], anchor: string): [number, number] {
   const [x0, y0, x1, y1] = r;
-  const col = "lr".includes(anchor.slice(-1)) ? anchor.slice(-1) : "c";
-  const row = "tb".includes(anchor[0]) ? anchor[0] : "c";
+  const [col, row] = colRow(anchor);
   return [col === "l" ? x0 : col === "r" ? x1 : (x0 + x1) / 2, row === "b" ? y0 : row === "t" ? y1 : (y0 + y1) / 2];
 }
+
+/** Bounds moved by (dx, dy). */
+const shift = (b: number[], dx: number, dy: number) => [b[0] + dx, b[1] + dy, b[2] + dx, b[3] + dy];
 
 /** The anchor an item gets where it's dropped: the third of the face its centre is in. */
 export function anchorAt(face: { w: number; h: number }, bounds: number[]): string {
@@ -97,18 +97,12 @@ export function pin(face: { w: number; h: number }, bounds: number[]): { anchor:
   const [fx, fy] = spot([0, 0, face.w, face.h], anchor);
   const [ix, iy] = spot(bounds, anchor);
   let dx = ix - fx, dy = iy - fy;
-  const col = "lr".includes(anchor.slice(-1)) ? anchor.slice(-1) : "c";
-  const row = "tb".includes(anchor[0]) ? anchor[0] : "c";
+  const [col, row] = colRow(anchor);
   if (col === "c" && Math.abs(dx) < SNAP) dx = 0;
   if (row === "c" && Math.abs(dy) < SNAP) dy = 0;
   const r = (v: number) => Math.round(v * 2) / 2 || 0;
   return { anchor, dx: r(dx), dy: r(dy) };
 }
-
-const ringsD = (rings: number[][][], dx = 0, dy = 0) =>
-  rings.map((r) => "M" + r.map(([x, y]) => `${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join("L") + "Z").join("");
-const linesD = (lines: number[][][], dx = 0, dy = 0) =>
-  lines.map((l) => "M" + l.map(([x, y]) => `${(x + dx).toFixed(2)} ${(y + dy).toFixed(2)}`).join("L")).join("");
 
 /** A hole preset from the parts library (serve.py /api/parts): its confirmed panel hole or window. */
 interface HolePreset {
@@ -143,7 +137,7 @@ export class FaceEditor {
 
   constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
               private host: FaceHost) {
-    this.svgRoot = svg("svg", { class: "board-svg face-svg", tabindex: 0 }) as SVGSVGElement;
+    this.svgRoot = svgEl("svg", { class: "board-svg face-svg", tabindex: 0 }) as SVGSVGElement;
     this.lib = h("div", { class: "face-lib", role: "dialog", "aria-label": "Logo library", tabindex: -1, hidden: true });
     this.lib.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
@@ -199,7 +193,7 @@ export class FaceEditor {
   /** The faces that have a page (a tab), in tab order. */
   private roles(): string[] {
     const info = this.info();
-    return ORDER.filter((r) => info[r] && READY.has(r));
+    return ORDER.filter((r) => info[r]);
   }
 
   private items(role = this.faceKey): FaceItem[] {
@@ -268,12 +262,12 @@ export class FaceEditor {
     if (!f || this.root.hidden) return;
     const pad = Math.max(10, 0.08 * Math.max(f.w, f.h));
     this.svgRoot.setAttribute("viewBox", `${-pad} ${-(f.h + pad)} ${f.w + 2 * pad} ${f.h + 2 * pad}`);
-    const g = svg("g", { transform: "scale(1 -1)" });
-    g.append(svg("path", { d: ringsD(f.outline), class: "board-wood", "fill-rule": "evenodd" }));
-    if (f.covered.length) g.append(svg("path", { d: ringsD(f.covered), class: "face-covered", "fill-rule": "nonzero" }));
-    g.append(svg("path", { d: ringsD(f.free), class: "face-free" }));
-    if (f.fixed.length) g.append(svg("path", { d: linesD(f.fixed), class: "board-line face-fixed" }));
-    if (f.board != null) g.append(svg("line", { x1: 0, y1: f.board, x2: f.w, y2: f.board, class: "face-board" }));
+    const g = svgEl("g", { transform: "scale(1 -1)" });
+    g.append(svgEl("path", { d: ringsD(f.outline), class: "board-wood", "fill-rule": "evenodd" }));
+    if (f.covered.length) g.append(svgEl("path", { d: ringsD(f.covered), class: "face-covered", "fill-rule": "nonzero" }));
+    g.append(svgEl("path", { d: ringsD(f.free), class: "face-free" }));
+    if (f.fixed.length) g.append(svgEl("path", { d: ringsD(f.fixed, false), class: "board-line face-fixed" }));
+    if (f.board != null) g.append(svgEl("line", { x1: 0, y1: f.board, x2: f.w, y2: f.board, class: "face-board" }));
     const items = new Map(this.items().map((i) => [i.id, i]));
     const d = this.drag;
     for (const it of f.items) {
@@ -281,20 +275,20 @@ export class FaceEditor {
       if (!it.bounds) {
         if (!it.error) continue;
         const [ax, ay] = spot([0, 0, f.w, f.h], items.get(it.id)!.anchor);
-        g.append(svg("rect", { x: ax - 10, y: ay - 6, width: 20, height: 12, "data-id": it.id,
+        g.append(svgEl("rect", { x: ax - 10, y: ay - 6, width: 20, height: 12, "data-id": it.id,
           class: `hit face-item bad${this.selected === it.id ? " sel" : ""}` }));
         continue;
       }
       const [ox, oy] = d && d.id === it.id ? [d.dx, d.dy] : [0, 0];
       const r = this.resize?.id === it.id ? this.resize : null;
       // while a corner is dragged, the item scales about the opposite corner
-      const art = r ? svg("g", { transform: `translate(${r.fx} ${r.fy}) scale(${r.k}) translate(${-r.fx} ${-r.fy})` }) : g;
-      if (it.fill?.length) art.append(svg("path", { d: ringsD(it.fill, ox, oy), class: "face-fill", "fill-rule": "evenodd" }));
-      art.append(svg("path", { d: linesD(it.lines, ox, oy), class: it.hole ? "board-cut" : "board-line" }));
+      const art = r ? svgEl("g", { transform: `translate(${r.fx} ${r.fy}) scale(${r.k}) translate(${-r.fx} ${-r.fy})` }) : g;
+      if (it.fill?.length) art.append(svgEl("path", { d: ringsD(it.fill, true, ox, oy), class: "face-fill", "fill-rule": "evenodd" }));
+      art.append(svgEl("path", { d: ringsD(it.lines, false, ox, oy), class: it.hole ? "board-cut" : "board-line" }));
       if (r) g.append(art);
-      const [x0, y0, x1, y1] = r ? this.scaled(r) : [it.bounds[0] + ox, it.bounds[1] + oy, it.bounds[2] + ox, it.bounds[3] + oy];
+      const [x0, y0, x1, y1] = r ? this.scaled(r) : shift(it.bounds, ox, oy);
       const bad = (d && d.id === it.id && d.moved) || r ? !this.clear(f, [x0, y0, x1, y1]) : it.bad;
-      g.append(svg("rect", { x: x0 - 1, y: y0 - 1, width: x1 - x0 + 2, height: y1 - y0 + 2, "data-id": it.id,
+      g.append(svgEl("rect", { x: x0 - 1, y: y0 - 1, width: x1 - x0 + 2, height: y1 - y0 + 2, "data-id": it.id,
         class: `hit face-item${this.selected === it.id ? " sel" : ""}${bad ? " bad" : ""}` }));
       if (this.selected === it.id && !d?.moved && SIZED.has(items.get(it.id)!.kind)) this.handles(g, f, it.id, [x0, y0, x1, y1]);
     }
@@ -303,12 +297,12 @@ export class FaceEditor {
     if (d?.moved) {
       const it = f.items.find((i) => i.id === d.id);
       if (it?.bounds) {
-        const b = [it.bounds[0] + d.dx, it.bounds[1] + d.dy, it.bounds[2] + d.dx, it.bounds[3] + d.dy];
+        const b = shift(it.bounds, d.dx, d.dy);
         const p = pin(f, b);
         const [fx, fy] = spot([0, 0, f.w, f.h], p.anchor);
         const [ix, iy] = spot(b, p.anchor);
-        g.append(svg("line", { x1: fx, y1: fy, x2: ix, y2: iy, class: "face-pin" }));
-        g.append(svg("circle", { cx: fx, cy: fy, r: 1.6, class: "face-spot" }));
+        g.append(svgEl("line", { x1: fx, y1: fy, x2: ix, y2: iy, class: "face-pin" }));
+        g.append(svgEl("circle", { cx: fx, cy: fy, r: 1.6, class: "face-spot" }));
       }
     }
     this.svgRoot.replaceChildren(g);
@@ -318,7 +312,7 @@ export class FaceEditor {
   private handles(g: SVGElement, f: FaceInfo, id: string, b: number[]) {
     const s = this.mmPerPx(f) * 9;
     for (const [name, x, y] of [["bl", b[0], b[1]], ["br", b[2], b[1]], ["tl", b[0], b[3]], ["tr", b[2], b[3]]] as const) {
-      g.append(svg("rect", { x: x - s / 2, y: y - s / 2, width: s, height: s, "data-id": id, "data-handle": name,
+      g.append(svgEl("rect", { x: x - s / 2, y: y - s / 2, width: s, height: s, "data-id": id, "data-handle": name,
         class: `face-handle ${name === "bl" || name === "tr" ? "nesw" : "nwse"}` }));
     }
   }
@@ -334,7 +328,7 @@ export class FaceEditor {
     const fills = entry?.fills && it.style !== "outline" ? (mm <= FILL_MAX ? " · filled" : " · hatched") : "";
     const px = this.mmPerPx(f);
     const [hx, hy] = [r.fx + (r.hx - r.fx) * r.k, r.fy + (r.hy - r.fy) * r.k];
-    const t = svg("text", { x: hx + 8 * px * Math.sign(hx - r.fx || 1), y: -(hy + 8 * px * Math.sign(hy - r.fy || 1)),
+    const t = svgEl("text", { x: hx + 8 * px * Math.sign(hx - r.fx || 1), y: -(hy + 8 * px * Math.sign(hy - r.fy || 1)),
       transform: "scale(1 -1)", class: "face-size", "font-size": 13 * px,
       "text-anchor": hx >= r.fx ? "start" : "end" });
     t.textContent = `${what}${+mm.toFixed(1)} mm${fills}`;
@@ -356,23 +350,13 @@ export class FaceEditor {
 
   /** Bounds inside the free area (approximately: its four corners; Python has the last word). */
   private clear(f: FaceInfo, b: number[]): boolean {
-    const inside = (x: number, y: number) => {
-      let n = 0;
-      for (const r of f.free) {
-        for (let i = 0, j = r.length - 1; i < r.length; j = i++) {
-          const [xi, yi] = r[i], [xj, yj] = r[j];
-          if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) n++;
-        }
-      }
-      return n % 2 === 1;
-    };
+    // even-odd over all the free area's rings: inside an odd number of them
+    const inside = (x: number, y: number) => f.free.filter((r) => insideRing(x, y, r)).length % 2 === 1;
     return inside(b[0], b[1]) && inside(b[2], b[1]) && inside(b[2], b[3]) && inside(b[0], b[3]);
   }
 
   private toFace(e: PointerEvent): [number, number] {
-    const m = this.svgRoot.getScreenCTM()!.inverse();
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
-    return [p.x, -p.y];
+    return clientToMM(this.svgRoot, e, true)!;
   }
 
   private down(e: PointerEvent) {
@@ -452,8 +436,7 @@ export class FaceEditor {
     const f = this.info()[this.faceKey];
     const it = f?.items.find((i) => i.id === id);
     if (!f || !it?.bounds) return;
-    const b = [it.bounds[0] + dx, it.bounds[1] + dy, it.bounds[2] + dx, it.bounds[3] + dy];
-    this.change(id, pin(f, b));
+    this.change(id, pin(f, shift(it.bounds, dx, dy)));
   }
 
   // ---------------------------------------------------------------- edits
@@ -468,25 +451,16 @@ export class FaceEditor {
   }
 
   /** Import SVG: a file picked here, its text kept in the box. Its own size if it says it in mm (height="40mm"). */
-  importSvg() {
-    const input = h("input", { type: "file", accept: ".svg,image/svg+xml" }) as HTMLInputElement;
-    input.onchange = async () => {
-      const file = input.files?.[0];
-      if (!file) return;
-      const text = await file.text();
-      const m = (new DOMParser().parseFromString(text, "image/svg+xml").documentElement.getAttribute("height") ?? "")
-        .match(/^\s*([\d.]+)\s*(mm|cm|in)\s*$/);
-      const mm = m ? Number(m[1]) * { mm: 1, cm: 10, in: 25.4 }[m[2] as "mm"] : 0;
-      const f = this.info()[this.faceKey];
-      const size = mm > 0 && f ? Math.min(mm, f.h * 0.8) : 30;
-      const item: FaceItem = { id: newId(), kind: "svg", svg: text, name: file.name, size: Math.round(size * 2) / 2,
-        style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 };
-      const faces = structuredClone(this.host.faces());
-      faces[this.faceKey] = [...(faces[this.faceKey] ?? []), item];
-      this.selected = item.id;
-      this.host.commit(faces);
-    };
-    input.click();
+  async importSvg() {
+    const file = await openFile(".svg,image/svg+xml");
+    if (!file) return;
+    const m = (new DOMParser().parseFromString(file.text, "image/svg+xml").documentElement.getAttribute("height") ?? "")
+      .match(/^\s*([\d.]+)\s*(mm|cm|in)\s*$/);
+    const mm = m ? Number(m[1]) * { mm: 1, cm: 10, in: 25.4 }[m[2] as "mm"] : 0;
+    const f = this.info()[this.faceKey];
+    const size = mm > 0 && f ? Math.min(mm, f.h * 0.8) : 30;
+    this.addItem({ id: newId(), kind: "svg", svg: file.text, name: file.name, size: Math.round(size * 2) / 2,
+      style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 });
   }
 
   /** A hole at the face's centre: `p` a library preset, or a plain round / rectangle. */
@@ -678,10 +652,7 @@ export class FaceEditor {
     const copy = it.kind === "hole"
       ? { ...structuredClone(it), id: newId(), dx: it.dx + (it.shape === "rect" ? it.w ?? 10 : it.d ?? 6) + 4 }
       : { ...structuredClone(it), id: newId(), dy: it.dy - Math.max(4, it.size * 1.5) };
-    const faces = structuredClone(this.host.faces());
-    faces[this.faceKey] = [...(faces[this.faceKey] ?? []), copy];
-    this.selected = copy.id;
-    this.host.commit(faces);
+    this.addItem(copy);
   }
 
   /** Keys while the face is shown: arrows nudge (Shift 10 mm), R rotates, Ctrl+D duplicates, Del deletes. */

@@ -112,7 +112,7 @@ class Port(unittest.TestCase):
             parts = P.board_parts(lay)
             pl, _ = S.pack([(p.w, p.h) for p in parts], S.A3)
             with self.subTest(case=k, board=(round(w), round(h))):
-                self.assertLessEqual(max(x["sheet"] for x in pl) + 1, len(SH.arrange(w, h, len(parts))))
+                self.assertLessEqual(max(x["sheet"] for x in pl) + 1, SH.sheet_count(w, h, len(parts)))
 
     def test_box_file_round_trip(self):
         import convert_stampcase as CV

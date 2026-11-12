@@ -9,9 +9,7 @@ from dataclasses import asdict, dataclass, field
 
 from . import config as C
 
-SIDES = ("left", "right", "bottom", "top")
 OPPOSITE = {"left": "right", "right": "left", "bottom": "top", "top": "bottom"}
-CCW = {"right": "top", "top": "left", "left": "bottom", "bottom": "right"}
 VERSION = 1
 
 
@@ -40,28 +38,6 @@ class Pocket:
     def centre(self, air):
         hw, hh = self.hole_size(air)
         return self.x + hw / 2, self.y + hh / 2
-
-    def set_centre(self, cx, cy, air):
-        hw, hh = self.hole_size(air)
-        self.x, self.y = cx - hw / 2, cy - hh / 2
-
-    def rotate(self, air):
-        """90 degrees counter-clockwise about its centre; the notch turns with it."""
-        cx, cy = self.centre(air)
-        if self.notch_side in ("left", "right"):
-            self.notch_end = "high" if self.notch_end == "low" else "low"
-        self.notch_side = CCW[self.notch_side]
-        self.w, self.h = self.h, self.w
-        self.set_centre(cx, cy, air)
-
-    def flip_notch(self):
-        self.notch_side = OPPOSITE[self.notch_side]
-
-    def swap_notch_end(self):
-        self.notch_end = "high" if self.notch_end == "low" else "low"
-
-    def cycle_label(self):
-        self.label_pos = {"notch": "side", "side": "end"}.get(self.label_pos, "notch")
 
     def label_side(self):
         """The side of the hole its name (B) prefers."""
@@ -135,15 +111,7 @@ class Case:
         case.magnets = [list(m) for m in case.magnets]
         return case
 
-    def save(self, path):
-        with open(path, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(self.to_dict(), f, indent=1, ensure_ascii=False)
-            f.write("\n")
-
     @classmethod
     def load(cls, path):
         with open(path, encoding="utf-8") as f:
             return cls.from_dict(json.load(f))
-
-    def copy(self):
-        return Case.from_dict(json.loads(json.dumps(self.to_dict())))

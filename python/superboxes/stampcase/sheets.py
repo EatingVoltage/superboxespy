@@ -1,38 +1,14 @@
-"""Boards on sheets (user 2026-10-24: "if it fits, put more than one piece on one page ... be economical with wood
-stock"). All of a case's boards are the same size, so a sheet holds a grid of them, turned 90 degrees when that fits
-more. Sheets are filled in board order, as full as they go, so only the last one has room to spare; each sheet's
-grid is the one that leaves the biggest rest piece. The rest wood is then cut free as rectangles: the full-width
-piece above the boards and the pieces to their right.
+"""How many of a case's boards fit a sheet (user 2026-10-24: "if it fits, put more than one piece on one page ... be
+economical with wood stock"). All of a case's boards are the same size, so a sheet holds a grid of them, turned 90
+degrees when that fits more: the board editor's sheet count and its "a little smaller saves a sheet" hint, and the
+auto layout's score. Where the boards really go, and the rest pieces cut free around them, is the shared packer's
+business (superboxes/sheets.py).
 
-Positions here are cut paths in sheet coordinates (board size + kerf), lower-left corners."""
+Sizes here are cut paths (board size + kerf)."""
 import math
-from dataclasses import dataclass
-
-from shapely.geometry import LineString, MultiLineString
-from shapely.ops import linemerge, unary_union
 
 from . import config as C
-from evlaser import lbrn
 from evlaser import machine as M
-
-
-@dataclass
-class Spot:
-    board: int          # index into the case's boards (base, pocket boards, lid)
-    rot: bool           # turned 90 degrees counter-clockwise
-    x: float            # cut path lower-left on the sheet
-    y: float
-
-
-@dataclass
-class Piece:
-    name: str
-    rect: tuple         # (x0, y0, x1, y1) on the sheet: edges on cut paths or sheet edges, x1 the sheet's right edge
-
-    @property
-    def size(self):
-        x0, y0, x1, y1 = self.rect
-        return x1 - x0, y1 - y0
 
 
 def _room():
@@ -90,88 +66,3 @@ def hint(w, h, n, most=C.SHEET_HINT):
             if then and then < now and (best is None or d < best[0]):
                 best = (d, "narrower" if narrower else "shorter", then)
     return best
-
-
-def _grid_spots(w, h, rot, cols, first, m):
-    pw, ph = path_size(w, h, rot)
-    return [Spot(first + k, rot, M.EDGE + (k % cols) * (pw + M.GAP), M.EDGE + (k // cols) * (ph + M.GAP))
-            for k in range(m)]
-
-
-def rest_pieces(spots, w, h, titles=None):
-    """The rectangles of rest wood worth keeping around boards laid out row by row from the bottom left: the
-    full-width piece above them, then the pieces right of each run of rows that end in the same place. Pieces need
-    FRAME_MIN_PIECE both ways; a piece whose cut would run above the reach limit stays with the sheet."""
-    sw, sh, usable = C.SHEET
-    if not spots:
-        return []
-    pw, ph = path_size(w, h, spots[0].rot)
-    by_y = {}
-    for s in spots:
-        by_y.setdefault(round(s.y, 3), []).append(s)
-    # (top, right end, last board) of each row, bottom up
-    rows = [(y + ph, last.x + pw, last) for y, r in sorted(by_y.items()) for last in [max(r, key=lambda s: s.x)]]
-    top = rows[-1][0]
-    out = []
-    if top <= usable - 0.5:
-        out.append(Piece("top rest piece", (0.0, top, sw, sh)))
-    k = 0
-    while k < len(rows):
-        j = k
-        while j + 1 < len(rows) and abs(rows[j + 1][1] - rows[k][1]) < 0.01:
-            j += 1
-        x0, y0, y1 = rows[k][1], (rows[k - 1][0] if k else 0.0), rows[j][0]
-        if sw - x0 >= C.FRAME_MIN_PIECE and y1 - y0 >= C.FRAME_MIN_PIECE and y1 <= usable - 0.5:
-            if k == 0:
-                name = "right rest piece"
-            else:
-                beside = rows[j][2].board
-                name = "rest piece beside the %s" % (titles[beside].lower() if titles else "board %d" % (beside + 1))
-            out.append(Piece(name, (x0, y0, sw, y1)))
-        k = j + 1
-    return out
-
-
-def frame_lines(pieces, outlines):
-    """The cuts that free the rest pieces: every edge of every piece that isn't a sheet edge, minus where it runs
-    on a board's own cut. Horizontal cuts overshoot the sheet's right edge so they go through. None if no cut."""
-    sw, sh, usable = C.SHEET
-    xe = sw + C.FRAME_OVERSHOOT
-    segs = []
-    for p in pieces:
-        x0, y0, x1, y1 = p.rect
-        if y0 > 1e-6:
-            segs.append(LineString([(x0, y0), (xe, y0)]))
-        if y1 < sh - 1e-6:
-            segs.append(LineString([(x0, y1), (xe, y1)]))
-        if x0 > 1e-6:
-            segs.append(LineString([(x0, y0), (x0, y1)]))
-    if not segs:
-        return None
-    near = unary_union([o.buffer(0.01) for o in outlines])     # stop where a cut meets a board's own cut
-    rest = lbrn._lines(unary_union(segs).difference(near))
-    keep = [g for g in lbrn._lines(linemerge(rest)) if g.length > 0.5] if rest else []
-    return MultiLineString(keep) if keep else None
-
-
-def arrange(w, h, n):
-    """[[Spot]] per sheet for n boards of w x h: sheets filled in board order, as full as they go; each sheet's grid
-    (turned or not, how many columns) the one that leaves the biggest rest piece."""
-    k = per_sheet(w, h)
-    if not k:
-        return []
-    grids = [(rot,) + grid(w, h, rot) for rot in (False, True)]
-    out = []
-    for first in range(0, n, k):
-        m = min(k, n - first)
-        best = None
-        for rot, cols, rows in grids:
-            for c in range(1, min(cols, m) + 1):
-                if math.ceil(m / c) > rows:
-                    continue
-                spots = _grid_spots(w, h, rot, c, first, m)
-                areas = tuple(sorted(-round(a * b) for a, b in (p.size for p in rest_pieces(spots, w, h)))) or (0,)
-                if best is None or (areas, rot) < best[0]:
-                    best = ((areas, rot), spots)
-        out.append(best[1])
-    return out

@@ -18,8 +18,12 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from functools import lru_cache
 
-from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon
-from shapely.ops import unary_union
+import shapely
+from shapely.geometry import LineString, MultiLineString, MultiPolygon
+
+from evlaser import lbrn
+
+from .svgart import area, mul as _mul
 
 FILL_TYPES = {"Scan", "Offset Fill"}
 BOTH_TYPES = {"Scan+Cut"}
@@ -45,7 +49,7 @@ class Art:
 
     @property
     def bounds(self):
-        return unary_union([g for g in (self.lines, self.fill) if not g.is_empty]).bounds
+        return tuple(float(v) for v in shapely.total_bounds([self.lines, self.fill]))
 
 
 def _xform(el):
@@ -54,14 +58,6 @@ def _xform(el):
         return IDENTITY
     v = [float(t) for t in x.text.split()]
     return tuple(v) if len(v) == 6 else IDENTITY
-
-
-def _mul(m, n):
-    """m after n."""
-    a, b, c, d, e, f = m
-    a2, b2, c2, d2, e2, f2 = n
-    return (a * a2 + c * b2, b * a2 + d * b2, a * c2 + c * d2, b * c2 + d * d2,
-            a * e2 + c * f2 + e, b * e2 + d * f2 + f)
 
 
 def _apply(m, pts):
@@ -182,7 +178,6 @@ class _Reader:
                 self.prims.setdefault(el.get("PrimID"), pl.text)
         self.strokes, self.rings = [], []
         self.skipped = 0
-        self.missing = 0                           # paths whose lists no earlier path had
 
     def kind(self, el):
         """"fill", "line", "both" or None (left out) for a shape's layer."""
@@ -209,9 +204,7 @@ class _Reader:
     def path_chains(self, el, m):
         vid, pid = el.get("VertID"), el.get("PrimID")
         vl, pl = el.find("VertList"), el.find("PrimList")
-        if vl is None and vid not in self.verts or pl is None and pid not in self.prims:
-            self.missing += 1
-        verts = _verts(vl.text) if vl is not None else self.verts.get(vid, [])
+        verts =_verts(vl.text) if vl is not None else self.verts.get(vid, [])
         prims = _prims(pl.text if pl is not None else self.prims.get(pid, ""), len(verts))
         return [(_apply(m, pts), closed) for pts, closed in _path(verts, prims)]
 
@@ -252,18 +245,13 @@ class _Reader:
 
 
 def _even_odd(rings):
-    """The area LightBurn fills: every closed ring toggles inside and outside."""
-    region = Polygon()
-    for r in rings:
-        p = Polygon(r).buffer(0)
-        if not p.is_empty:
-            region = region.symmetric_difference(p)
-    polys = [g for g in (region.geoms if hasattr(region, "geoms") else [region]) if isinstance(g, Polygon) and not g.is_empty]
-    return MultiPolygon(polys)
+    """The area LightBurn fills: every closed ring toggles inside and outside (as an SVG's, svgart.area)."""
+    return MultiPolygon(lbrn._polys(area(rings)))
 
 
 @lru_cache(maxsize=32)
-def _parse(text):
+def parse(text):
+    """The drawing of a .lbrn2 file's text as an Art. Raises ValueError for text that isn't a LightBurn project."""
     try:
         root = ET.fromstring(text)
     except ET.ParseError as e:
@@ -274,11 +262,6 @@ def _parse(text):
     for el in root.findall("Shape"):
         rd.shape(el, IDENTITY)
     return Art(MultiLineString([s for s in rd.strokes if s.length > 0]), _even_odd(rd.rings), rd.skipped)
-
-
-def parse(text):
-    """The drawing of a .lbrn2 file's text as an Art. Raises ValueError for text that isn't a LightBurn project."""
-    return _parse(text)
 
 
 @lru_cache(maxsize=32)

@@ -106,6 +106,19 @@ def _ring_json(ring):
     return np.round(np.asarray(ring.coords)[:-1, :2], 4).tolist()
 
 
+def coords_json(geoms, nd):
+    """[[x, y], ...] per line or ring of `geoms`, rounded to nd decimals in one numpy call (per-number round() was most
+    of the face editor's info, 2026-11-12)."""
+    if not geoms:
+        return []
+    vals = np.round(shapely.get_coordinates(geoms), nd).tolist()
+    out, k = [], 0
+    for n in shapely.get_num_coordinates(geoms).tolist():
+        out.append(vals[k:k + n])
+        k += n
+    return out
+
+
 def _poly_json(poly):
     if poly is None or poly.is_empty:
         return None

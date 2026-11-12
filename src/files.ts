@@ -87,7 +87,16 @@ export async function writeToFolder(sub: string | null, files: { name: string; c
   return sub ? `${root.name}/${safeName(sub)}` : root.name;
 }
 
-/** Newest of `names` in <folder>/<sub>/ that LightBurn itself saved (its header has AskForSendName). */
+/** The text of the newest file that LightBurn itself saved (its header has AskForSendName), or null. */
+function newestSaved(files: ({ text: string; t: number } | null)[]): string | null {
+  let best: { text: string; t: number } | null = null;
+  for (const f of files) {
+    if (f && f.text.slice(0, 600).includes("AskForSendName") && (!best || f.t > best.t)) best = f;
+  }
+  return best?.text ?? null;
+}
+
+/** Newest of `names` in <folder>/<sub>/ that LightBurn itself saved. */
 export async function lightburnSaved(sub: string, names: string[]): Promise<string | null> {
   const root = await writable();
   if (!root) return null;
@@ -97,17 +106,14 @@ export async function lightburnSaved(sub: string, names: string[]): Promise<stri
   } catch {
     return null;
   }
-  let best: { text: string; t: number } | null = null;
-  for (const n of names) {
+  return newestSaved(await Promise.all(names.map(async (n) => {
     try {
       const f = await (await dir.getFileHandle(n)).getFile();
-      const text = await f.text();
-      if (text.slice(0, 600).includes("AskForSendName") && (!best || f.lastModified > best.t)) best = { text, t: f.lastModified };
+      return { text: await f.text(), t: f.lastModified as number };
     } catch {
-      /* not there */
+      return null;   // not there
     }
-  }
-  return best?.text ?? null;
+  })));
 }
 
 /** Names of the files in <folder>/<sub>/ ([] when there's no folder or no such subfolder). */
@@ -154,24 +160,25 @@ async function sha256(text: string): Promise<string> {
 
 export type OpenResult = { ok: true; path: string } | { ok: false; error: string; cancelled?: boolean };
 
+/** POST /api/open-lightburn (serve.py open_in_lightburn). */
+async function openCall(req: object): Promise<{ ok: boolean; path?: string; root?: string; error?: string; need_root?: boolean }> {
+  try {
+    const r = await fetch("/api/open-lightburn", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req),
+    });
+    if (!r.ok) throw new Error(String(r.status));
+    return await r.json();
+  } catch {
+    return { ok: false, error: NEEDS_SERVE };
+  }
+}
+
 /** Open <folder>/<sub>/<file> (written a moment ago with `content`) in LightBurn. */
 export async function openInLightBurn(sub: string, file: string, content: string): Promise<OpenResult> {
   const name = folder?.name;
   if (!name) return { ok: false, error: "No folder picked." };
   const req = { folder: name, path: [safeName(sub), file], sha256: await sha256(content) };
-  const ask = async (root: string | null) => {
-    try {
-      const r = await fetch("/api/open-lightburn", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...req, root }),
-      });
-      if (!r.ok) throw new Error(String(r.status));
-      return (await r.json()) as { ok: boolean; path?: string; root?: string; error?: string; need_root?: boolean };
-    } catch {
-      return { ok: false, error: "Open in LightBurn needs the app started with start.bat or the Start menu entry (serve.py)." };
-    }
-  };
+  const ask = (root: string | null) => openCall({ ...req, root });
   let r = await ask(remembered(name));
   if (!r.ok && r.need_root) {
     const typed = prompt(`Where is the folder "${name}" on this computer? Paste its full path ` +
@@ -330,33 +337,17 @@ export interface Place {
 export function besideHome(home: string): Place {
   return {
     list: async () => (await boxCall({ op: "list", home })).names ?? [],
-    async saved(names) {
-      let best: { text: string; t: number } | null = null;
-      for (const name of names) {
-        const r = await boxCall({ op: "read_beside", home, name });
-        const text = r.text ?? "";
-        const byLightBurn = text.slice(0, 600).includes("AskForSendName");
-        if (byLightBurn && (!best || (r.mtime ?? 0) > best.t)) {
-          best = { text, t: r.mtime ?? 0 };
-        }
-      }
-      return best?.text ?? null;
-    },
+    saved: async (names) => newestSaved(await Promise.all(names.map(async (name) => {
+      const r = await boxCall({ op: "read_beside", home, name });
+      return { text: r.text ?? "", t: r.mtime ?? 0 };
+    }))),
     async write(files) {
       const r = await writeBeside(home, files);
       return r.ok ? r.dir : null;
     },
     async open(file, content) {
-      try {
-        const r = await fetch("/api/open-lightburn", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ file: `${dirOf(home)}\\${file}`, sha256: await sha256(content) }),
-        });
-        const o = await r.json();
-        return o.ok ? { ok: true, path: o.path } : { ok: false, error: o.error ?? "LightBurn didn't start." };
-      } catch {
-        return { ok: false, error: NEEDS_SERVE };
-      }
+      const r = await openCall({ file: `${dirOf(home)}\\${file}`, sha256: await sha256(content) });
+      return r.ok ? { ok: true, path: r.path ?? file } : { ok: false, error: r.error ?? "LightBurn didn't start." };
     },
   };
 }

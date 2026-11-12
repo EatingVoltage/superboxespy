@@ -7,16 +7,9 @@
 // so red shows at once; the full layout follows on release.
 
 import { h } from "./params";
-import { pathD } from "./sheetview";
-import { btn, fillToolbar, helpButton, helpCard, holdWhileTyping } from "./ui";
+import { clientToMM, insideRing, pathD, ringsD, svgEl } from "./sheetview";
+import { btn, fillToolbar, helpButton, helpCard, holdWhileTyping, seg } from "./ui";
 import type { Block, BlockKey, Build, Case, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
-
-const NS = "http://www.w3.org/2000/svg";
-const svg = (tag: string, attrs: Record<string, any> = {}) => {
-  const el = document.createElementNS(NS, tag);
-  for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
-  return el;
-};
 
 export const GENERATOR = "StampCase";
 
@@ -81,20 +74,11 @@ function segDist(px: number, py: number, ax: number, ay: number, bx: number, by:
   return Math.hypot(px - ax - t * dx, py - ay - t * dy);
 }
 
-function inside(x: number, y: number, ring: Ring) {
-  let ins = false;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const [xi, yi] = ring[i], [xj, yj] = ring[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) ins = !ins;
-  }
-  return ins;
-}
-
 /** Distance from a point to a polygon set's boundary (0 inside the first ring of a polygon). */
 function pointDist(x: number, y: number, polys: ShapePoly[], dx = 0, dy = 0) {
   let d = Infinity;
   for (const p of polys) {
-    if (inside(x - dx, y - dy, p.outer) && !p.holes.some((hh) => inside(x - dx, y - dy, hh))) return 0;
+    if (insideRing(x - dx, y - dy, p.outer) && !p.holes.some((hh) => insideRing(x - dx, y - dy, hh))) return 0;
     for (const r of [p.outer, ...p.holes]) {
       for (let i = 1; i < r.length; i++) d = Math.min(d, segDist(x - dx, y - dy, r[i - 1][0], r[i - 1][1], r[i][0], r[i][1]));
     }
@@ -121,9 +105,7 @@ function bounds(polys: ShapePoly[] | null): [number, number, number, number] {
   return [x0, y0, x1, y1];
 }
 
-function polyD(polys: ShapePoly[] | null, dx = 0, dy = 0): string {
-  return rings(polys).map((r) => "M" + r.map(([x, y]) => `${(x + dx).toFixed(3)} ${(y + dy).toFixed(3)}`).join("L") + "Z").join("");
-}
+const polyD = (polys: ShapePoly[] | null, dx = 0, dy = 0) => ringsD(rings(polys), true, dx, dy, 3);
 
 // ------------------------------------------------------------------ host
 export interface StampHost {
@@ -159,14 +141,12 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
   const project = h("input", { type: "text", value: c.project, placeholder: "the design these stamps are for", spellcheck: "false" }) as HTMLInputElement;
   project.onchange = () => commit((n) => (n.project = project.value), undefined, false);
   g1.append(h("label", { class: "row text-row" }, h("span", {}, "Project"), project));
-  const seg = h("div", { class: "seg", role: "group", "aria-label": "Pocket boards" });
-  for (const k of [1, 2, 3, 4]) {
-    const b = h("button", { "aria-pressed": c.pocket_boards === k, title: `${k} pocket board${k > 1 ? "s" : ""}: pockets ${(k * (host.build()?.info.thickness ?? 3.7)).toFixed(1)} mm deep` }, String(k));
-    b.onclick = () => commit((n) => (n.pocket_boards = k));
-    seg.append(b);
-  }
+  const thick = host.build()?.info.thickness ?? 3.7;
+  const boards = seg("Pocket boards", [1, 2, 3, 4].map((k): [number, string, string] =>
+    [k, String(k), `${k} pocket board${k > 1 ? "s" : ""}: pockets ${(k * thick).toFixed(1)} mm deep`]),
+  c.pocket_boards, (k) => commit((n) => (n.pocket_boards = k)));
   g1.append(h("div", { class: "row" }, h("div", { class: "row-head" }, h("label", {}, "Pocket boards"),
-    h("span", { class: "hint" }, d ? `pockets ${d.depth.toFixed(1)} mm deep` : "")), seg));
+    h("span", { class: "hint" }, d ? `pockets ${d.depth.toFixed(1)} mm deep` : "")), boards));
   const logos = d?.logos ?? [];
   if (logos.length) {
     const sel = h("select", { "aria-label": "Logo" }) as HTMLSelectElement;
@@ -203,9 +183,7 @@ export function renderPanel(el: HTMLElement, host: StampHost, editor: BoardEdito
   const list = h("div", { class: "stamp-list" });
   for (const p of c.pockets) {
     const sel = editor.selected.has(p.id);
-    const row = h("div", { class: `stamp-row${sel ? " sel" : ""}`, "data-id": p.id });
-    const bad = d?.problems.some((q) => q.level === "error" && q.refs.includes(p.id));
-    if (bad) row.classList.add("bad");
+    const row = h("div", { class: `stamp-row${sel ? " sel" : ""}`, "data-id": p.id });   // red: renderCheck
     const name = h("input", { type: "text", value: p.name, spellcheck: "false", "aria-label": "Name" }) as HTMLInputElement;
     const num = (v: number | undefined, label: string, ph = "") =>
       h("input", { type: "number", min: 0, step: 0.5, value: v ? String(v) : "", placeholder: ph, class: "num", "aria-label": label }) as HTMLInputElement;
@@ -285,7 +263,7 @@ export class BoardEditor {
 
   constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
               private host: StampHost) {
-    this.svgRoot = svg("svg", { class: "board-svg", tabindex: 0 }) as SVGSVGElement;
+    this.svgRoot = svgEl("svg", { class: "board-svg", tabindex: 0 }) as SVGSVGElement;
     root.append(this.svgRoot);
     this.svgRoot.addEventListener("wheel", (e) => this.wheel(e), { passive: false });
     this.svgRoot.addEventListener("pointerdown", (e) => this.down(e));
@@ -399,13 +377,13 @@ export class BoardEditor {
     const v = this.view ?? this.fitView();
     this.svgRoot.setAttribute("viewBox", v.map((n) => n.toFixed(2)).join(" "));
     const [ox, oy] = d.origin;
-    const g = svg("g", { transform: "scale(1 -1)" });
+    const g = svgEl("g", { transform: "scale(1 -1)" });
     // the board: wood, engraving, cuts - as LightBurn gets them, before kerf
-    const wood = svg("path", { d: polyD(part.shape, ox, oy), class: "board-wood", "fill-rule": "evenodd" });
+    const wood = svgEl("path", { d: polyD(part.shape, ox, oy), class: "board-wood", "fill-rule": "evenodd" });
     g.append(wood);
-    const art = svg("g", { transform: `translate(${ox} ${oy})` });
-    if (part.paths["1"]) art.append(svg("path", { d: pathD(part.paths["1"]), class: "board-line" }));
-    if (part.paths["2"]) art.append(svg("path", { d: pathD(part.paths["2"]), class: "board-cut" }));
+    const art = svgEl("g", { transform: `translate(${ox} ${oy})` });
+    if (part.paths["1"]) art.append(svgEl("path", { d: pathD(part.paths["1"]), class: "board-line" }));
+    if (part.paths["2"]) art.append(svgEl("path", { d: pathD(part.paths["2"]), class: "board-cut" }));
     g.append(art);
 
     // what can be picked: pockets everywhere, magnets on the top board and lid, the blocks on their board
@@ -421,17 +399,17 @@ export class BoardEditor {
     for (const p of d.pockets) {
       const t: Hit = { kind: "pocket", id: p.id };
       const [mx, my] = off(t);
-      const el = svg("path", { d: polyD(p.hole, mx, my), class: cls(t, "hit pocket"), "data-ref": p.id });
+      const el = svgEl("path", { d: polyD(p.hole, mx, my), class: cls(t, "hit pocket"), "data-ref": p.id });
       g.append(el);
       if (this.selected.has(p.id) && p.label_box && this.tab === d.top_key) {
-        g.append(svg("path", { d: polyD(p.label_box, mx, my), class: "label-box" }));
+        g.append(svgEl("path", { d: polyD(p.label_box, mx, my), class: "label-box" }));
       }
     }
     if (this.tab === d.top_key || this.tab === "lid") {
       d.magnets.forEach(([x, y], i) => {
         const t: Hit = { kind: "magnet", i };
         const [mx, my] = off(t);
-        g.append(svg("circle", { cx: x + mx, cy: y + my, r: Math.max(d.magnet_r, 1.6), class: cls(t, "hit magnet"), "data-ref": `magnet:${i}` }));
+        g.append(svgEl("circle", { cx: x + mx, cy: y + my, r: Math.max(d.magnet_r, 1.6), class: cls(t, "hit magnet"), "data-ref": `magnet:${i}` }));
       });
     }
     const blocks: BlockKey[] = this.tab === d.top_key ? ["top_block"] : BLOCKS_ON[this.tab] ?? [];
@@ -440,7 +418,7 @@ export class BoardEditor {
       if (!bl.region) continue;
       const t: Hit = { kind: "block", key: k };
       const [mx, my] = off(t);
-      g.append(svg("path", { d: polyD(bl.region, mx, my), class: cls(t, "hit block"), "data-ref": k }));
+      g.append(svgEl("path", { d: polyD(bl.region, mx, my), class: cls(t, "hit block"), "data-ref": k }));
     }
     this.svgRoot.replaceChildren(g);
   }
@@ -665,10 +643,7 @@ export class BoardEditor {
 
   // ---------------------------------------------------------------- pointer
   private toMM(e: { clientX: number; clientY: number }): [number, number] {
-    const m = this.svgRoot.getScreenCTM();
-    if (!m) return [0, 0];
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
-    return [p.x, -p.y];                                  // the drawing is flipped: Y up
+    return clientToMM(this.svgRoot, e, true) ?? [0, 0];   // the drawing is flipped: Y up
   }
 
   private down(e: PointerEvent) {
@@ -739,10 +714,10 @@ export class BoardEditor {
     e.preventDefault();
     const v = this.view ?? this.fitView();
     const k = e.deltaY < 0 ? 1 / 1.15 : 1.15;
-    const m = this.svgRoot.getScreenCTM();
-    if (!m) return;
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
-    this.view = [p.x - (p.x - v[0]) * k, p.y - (p.y - v[1]) * k, v[2] * k, v[3] * k];
+    const p = clientToMM(this.svgRoot, e);               // in the viewBox's units (y down)
+    if (!p) return;
+    const [px, py] = p;
+    this.view = [px - (px - v[0]) * k, py - (py - v[1]) * k, v[2] * k, v[3] * k];
     this.draw();
   }
 }

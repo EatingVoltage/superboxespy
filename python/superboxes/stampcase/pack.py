@@ -8,7 +8,7 @@ New and duplicated stamps go into free space without moving anything else.
 Spacing rules (the same the layout checks): holes C.WEB apart; a name strip never on a hole or on another strip."""
 import math
 
-import numpy as np
+import shapely
 from shapely import affinity
 from shapely.geometry import GeometryCollection, Polygon
 from shapely.ops import unary_union
@@ -60,6 +60,40 @@ def _clear(a, b):
                 and g.intersection(h).area > 1e-6):
             return False
     return True
+
+
+class _Others:
+    """Other pockets (at least one) to ask _clear's question of many times: may a group sit next to all of them? Each
+    ask looks at the pieces near the group only. Against their union, _clear's bounding-box test never answered (the
+    union's box holds every spot next to them) and every ask measured the exact distance to all of them: most of an
+    Add on a big case (2026-11-12)."""
+
+    def __init__(self, ps, air):
+        self.holes = [S.hole(p, air) for p in ps]
+        self.strips = [S.strip(p, air) for p in ps if p.label_pos != "notch"]
+        self.htree = shapely.STRtree(self.holes)
+        self.stree = shapely.STRtree(self.strips) if self.strips else None
+
+    def clear(self, group):
+        """_clear(group, (the holes' union, the strips' union))."""
+        h, s = group
+        if h.is_empty:
+            return True
+        if len(self.htree.query(h, predicate="dwithin", distance=C.WEB - 1e-6)):
+            return False
+        return not any(_overlaps(g, tree, pieces) for g, tree, pieces in (
+            (s, self.htree, self.holes), (h, self.stree, self.strips), (s, self.stree, self.strips)))
+
+
+def _overlaps(g, tree, pieces):
+    """Does g share area (as _clear counts it) with the union of `pieces` (in `tree`)? Only those it touches count."""
+    if g.is_empty or tree is None:
+        return False
+    hit = tree.query(g, predicate="intersects")
+    if not len(hit):
+        return False
+    other = pieces[hit[0]] if len(hit) == 1 else unary_union([pieces[i] for i in sorted(hit)])
+    return g.intersection(other).area > 1e-6
 
 
 def _shift(group, dx, dy):
@@ -114,16 +148,15 @@ def _row(pockets, air, mode):
     return _group(pockets, air)
 
 
-def _stack(rows):
-    """Vertical offsets: each row as low as it goes while keeping clear of the rows below."""
-    offsets, placed = [], None
-    for g in rows:
-        if placed is None:
-            offsets.append(0.0)
-            placed = g
+def _stack(rows, groups, air):
+    """Move each row (its pockets at y = 0, `groups` their (holes, strips) from _row) up, as low as it goes while
+    keeping clear of the rows below."""
+    for k, (r, g) in enumerate(zip(rows, groups)):
+        if not k:
             continue
-        ok = lambda dy: _clear(_shift(g, 0, dy), placed)
-        top = max(h.bounds[3] for h in placed if not h.is_empty)
+        below = _Others([p for q in rows[:k] for p in q], air)
+        ok = lambda dy: below.clear(_shift(g, 0, dy))
+        top = float(shapely.total_bounds(below.holes + below.strips)[3])
         bottom = min(h.bounds[1] for h in g if not h.is_empty)
         dy = top - bottom + C.WEB
         steps = 0
@@ -134,10 +167,8 @@ def _stack(rows):
         for _ in range(6):
             mid = (lo + hi) / 2
             lo, hi = (lo, mid) if ok(mid) else (mid, hi)
-        offsets.append(hi)
-        moved = _shift(g, 0, hi)
-        placed = tuple(unary_union([a, b]) for a, b in zip(placed, moved))
-    return offsets
+        for p in r:
+            p.y += hi
 
 
 def _board_of(case, pockets):
@@ -146,9 +177,9 @@ def _board_of(case, pockets):
     air = case.air
     mark = mark_text()
     holes = [S.hole(p, air) for p in pockets]
-    strips = [S.strip(p, air) for p in pockets if p.label_pos != "notch"]
-    feet = np.array([S.footprint(p, air).bounds for p in pockets])
-    content = (feet[:, 0].min(), feet[:, 1].min(), feet[:, 2].max(), feet[:, 3].max())
+    every_strip = [S.strip(p, air) for p in pockets]
+    strips = [g for p, g in zip(pockets, every_strip) if p.label_pos != "notch"]
+    content = tuple(shapely.total_bounds(holes + every_strip).tolist())     # the footprints' bounds
     top = top_block_geo(case, *auto_top_block(case, content, mark), mark)
     extra = [(GeometryCollection(strips), C.TEXT_EDGE - C.TEXT_CUT)] if strips else []
     x0, y0, x1, y1 = board_rect(GeometryCollection(holes + [top.region]), extra)
@@ -171,11 +202,7 @@ def repack(case):
     for mode in MODES:
         for per_row in range(1, len(order) + 1):
             rows = [order[i:i + per_row] for i in range(0, len(order), per_row)]
-            geos = [_row(r, air, mode) for r in rows]
-            offsets = _stack(geos)
-            for r, dy in zip(rows, offsets):
-                for p in r:
-                    p.y += dy
+            _stack(rows, [_row(r, air, mode) for r in rows], air)
             snapshot = [(p, p.notch_side, p.notch_end, p.label_pos, p.x, p.y) for p in order]
             w, h = _board_of(case, order)
             area = w * h * (1.0 if mode == "notch" else NOT_NOTCH_PENALTY)
@@ -202,7 +229,7 @@ def place_new(case, pocket, near=None):
     if not others:
         _set(pocket, "right", "low", 0.0, 0.0)
         return
-    rest = _group(others, air)
+    rest = _Others(others, air)
     block = None
     if case.top_block.placed:
         tb = case.top_block
@@ -211,7 +238,7 @@ def place_new(case, pocket, near=None):
     nx, ny = near.centre(air) if near else (0.0, 0.0)
     best = None
     for o in others:
-        fx0, fy0, fx1, fy1 = S.footprint(o, air).bounds
+        fx0, fy0, fx1, fy1 = S.footprint_bounds(o, air)
         starts = [((fx1 + C.WEB, o.y), (1, 0)), ((fx0 - C.WEB - hw, o.y), (-1, 0)),
                   ((o.x, fy1 + C.WEB), (0, 1)), ((o.x, fy0 - C.WEB - hh), (0, -1))]
         for (x, y), (dx, dy) in starts:
@@ -219,7 +246,7 @@ def place_new(case, pocket, near=None):
                 _set(pocket, side, end, x, y)
                 for _ in range(40):
                     mine = _group([pocket], air)
-                    if _clear(mine, rest) and (block is None or not mine[0].intersects(block)):
+                    if rest.clear(mine) and (block is None or not mine[0].intersects(block)):
                         break
                     pocket.x += dx
                     pocket.y += dy

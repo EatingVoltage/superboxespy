@@ -48,11 +48,14 @@ def mark_width(text, h):
     return SS.text_width(text, h, MARK_FONT)
 
 
+def rings(g):
+    """Every ring (outer and holes) of g's polygons: what an outline engraving draws, what the page draws of an area."""
+    return [r for q in lbrn._polys(g) for r in (q.exterior, *q.interiors)]
+
+
 def mark_lines(text, x, y, h):
     """The maker's mark as engraved: eV Sans Bold outlines, cap height h, its lower-left corner at (x, y)."""
-    g = SS.text(text, x + mark_width(text, h) / 2, y + h / 2, h, MARK_FONT)
-    polys = getattr(g, "geoms", [g])
-    return MultiLineString([list(r.coords) for p in polys if not p.is_empty for r in (p.exterior, *p.interiors)])
+    return MultiLineString(rings(SS.text(text, x + mark_width(text, h) / 2, y + h / 2, h, MARK_FONT)))
 
 
 def mark_spot(p, text, thickness, height=MARK_H, avoid=None):
@@ -104,6 +107,15 @@ def bottom_part(parts):
     return max(body, key=_area).index
 
 
+def mark_part(parts, mark, default_part=None):
+    """The index of the part the maker's mark goes on: the one it was put on (mark["part"]), else default_part (the
+    closed box's bottom face), else bottom_part()."""
+    idx = mark.get("part")
+    if idx is None or idx >= len(parts):
+        idx = default_part if default_part is not None else bottom_part(parts)
+    return idx
+
+
 _last_spot = {}       # (box type, part index, text) -> where the mark went in the last full build
 
 
@@ -123,9 +135,7 @@ def decorations(parts, opts, thickness, box=None, draft=False, avoid=None, defau
     mark = opts.get("mark") or {}
     if mark.get("enabled", True) and parts:
         text = mark.get("text") or mark_text()
-        idx = mark.get("part")
-        if idx is None or idx >= len(parts):
-            idx = default_part if default_part is not None else bottom_part(parts)
+        idx = mark_part(parts, mark, default_part)
         if draft:
             spot = _last_spot.get((box, idx, text))
             if spot and (spot[0] + mark_width(text, spot[2]) > parts[idx].w or spot[1] + spot[2] > parts[idx].h):
@@ -229,6 +239,24 @@ def check_layout(parts, placements, sheet, comp=None):
                     problems.append("%s and %s are %.1f mm apart on sheet %d (min %.1f)"
                                     % (items[i][0].name, items[j][0].name, d, n + 1, M.GAP))
     return problems
+
+
+def export_layout(parts, layout, sheet, comp=None, noun="parts",
+                  too_big="Some parts are bigger than the cutting area."):
+    """(layout, None) for an export, every type: the layout as shown, or the parts packed afresh without one; (None,
+    the refusal) when a part doesn't fit the cutting area, has no place, or the layout breaks the sheet rules."""
+    if not layout:
+        layout, big = S.pack([(p.w, p.h) for p in parts], sheet)
+        if big:
+            return None, too_big
+    missing = set(range(len(parts))) - {pl["part"] for pl in layout}
+    if missing:
+        return None, "%s without a place on a sheet: %s" % (noun.capitalize(),
+                                                             ", ".join(parts[i].name for i in sorted(missing)))
+    problems = check_layout(parts, layout, sheet, comp)
+    if problems:
+        return None, "Layout breaks the sheet rules:\n" + "\n".join(problems)
+    return layout, None
 
 
 # ------------------------------------------------------------------ files
@@ -388,7 +416,7 @@ def files_result(proj):
     """export()/calibration_export() result: the one .lbrn2 project, the SVG sheets and the per-sheet numbers."""
     fname, lb = proj["lbrn2"]
     out = [{"name": fname, "kind": "lbrn2", "content": lb, "minutes": total_minutes(proj["sheets"])}]
-    for (sname, svg), n in zip(proj["svgs"], proj.get("svg_sheets") or range(len(proj["svgs"]))):
+    for (sname, svg), n in zip(proj["svgs"], proj["svg_sheets"]):
         s = proj["sheets"][n]
         out.append({"name": sname, "kind": "svg", "content": svg, "minutes": s["minutes"], "offcut": s["offcut"]})
     return {"ok": True, "files": out, "kept": proj["kept"],

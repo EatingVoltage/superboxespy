@@ -11,8 +11,7 @@ from . import config as C
 from . import shapes as S
 from .model import OPPOSITE
 
-SIDES = ("left", "right", "bottom", "top")
-STEP = 1.0          # mm between candidate positions along a side
+STEP = 1.0         # mm between candidate positions along a side
 
 
 def side_order(p):
@@ -51,7 +50,7 @@ def _candidates(rect, side, along, across, prefer, offsets):
 
 
 def place(lay, blockers, allowed):
-    """Set g.label / g.label_box / g.label_cap / g.label_fits on every pocket of `lay`.
+    """Set g.label / g.label_box / g.label_fits on every pocket of `lay`.
     blockers: geometry no name may touch (magnets with their clearance, the top block); allowed: where a name may
     go without making the board bigger. A name outside it grows the board, so it's only used when nothing inside fits."""
     holes = shapely.STRtree([g.hole for g in lay.pockets]) if lay.pockets else None
@@ -62,7 +61,7 @@ def place(lay, blockers, allowed):
     placed = []
     for g in lay.pockets:
         p = g.pocket
-        g.label, g.label_box, g.label_cap, g.label_fits = Polygon(), None, 0.0, True
+        g.label, g.label_box, g.label_fits = Polygon(), None, True
         name = p.name.strip()
         if not name:
             continue
@@ -76,7 +75,7 @@ def place(lay, blockers, allowed):
         if hit is None:
             g.label_fits = False
             continue
-        g.label, g.label_box, g.label_cap = hit[0], hit[1], cap
+        g.label, g.label_box = hit[0], hit[1]
         placed.append(hit[1])
 
 

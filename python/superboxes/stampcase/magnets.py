@@ -27,38 +27,38 @@ def auto(lay):
     x0, y0, x1, y1 = lay.rect
     k = C.CORNER_CUT / 2
     chosen = []
+    # each candidate's and each cover point's distance to the nearest chosen magnet, kept up to date as magnets are
+    # chosen (not measured again against every one each step: a 30-stamp case's grids are tens of thousands of points)
+    cand_d = np.full(len(cand), np.inf)
+    cover_d = np.full(len(cover), np.inf)
 
-    def spaced():
-        if not chosen:
-            return np.ones(len(cand), bool)
-        ch = np.array(chosen)
-        return np.min(np.hypot(cand[:, None, 0] - ch[None, :, 0], cand[:, None, 1] - ch[None, :, 1]), 1) >= MIN_SPACING
+    def choose(i):
+        x, y = cand[i]
+        chosen.append((x, y))
+        np.minimum(cand_d, np.hypot(cand[:, 0] - x, cand[:, 1] - y), out=cand_d)
+        np.minimum(cover_d, np.hypot(cover[:, 0] - x, cover[:, 1] - y), out=cover_d)
 
     for corner in ((x0, y0), (x1, y0), (x0, y1), (x1 - k, y1 - k)):
         d = np.hypot(cand[:, 0] - corner[0], cand[:, 1] - corner[1])
-        d[~spaced()] = np.inf
+        d[cand_d < MIN_SPACING] = np.inf
         i = int(np.argmin(d))
         if d[i] < 40.0:
-            chosen.append(tuple(cand[i]))
+            choose(i)
 
     active = np.ones(len(cover), bool)
     for _ in range(100):
-        if chosen:
-            ch = np.array(chosen)
-            dmin = np.min(np.hypot(cover[:, None, 0] - ch[None, :, 0], cover[:, None, 1] - ch[None, :, 1]), 1)
-        else:
-            dmin = np.full(len(cover), np.inf)
+        dmin = cover_d.copy()
         dmin[~active] = 0
         w = int(np.argmax(dmin))
         if dmin[w] <= C.MAGNET_COVER:
             break
         d = np.hypot(cand[:, 0] - cover[w, 0], cand[:, 1] - cover[w, 1])
-        d[~spaced()] = np.inf
+        d[cand_d < MIN_SPACING] = np.inf
         i = int(np.argmin(d))
         if not np.isfinite(d[i]) or d[i] > dmin[w] - 5.0:
             active[w] = False      # no magnet can get closer to that spot than the ones it has
             continue
-        chosen.append(tuple(cand[i]))
+        choose(i)
     return [(round(float(x), 3), round(float(y), 3)) for x, y in chosen]
 
 

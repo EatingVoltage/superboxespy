@@ -9,6 +9,9 @@ export(req) -> the LightBurn project; refuses while the case has errors or the l
 op(req)     -> {"params": the changed case} for the edits that need Python's placement: add, duplicate, repack,
                add_magnet. Every other edit the page makes to the case JSON itself.
 """
+import json
+import os
+
 from .. import export as X
 from .. import sheets as S
 from ..assembly import _cavity, _cell, _place, extent
@@ -111,10 +114,8 @@ def editor(lay, parts):
         "rect": list(lay.rect), "origin": [parts[0].ox, parts[0].oy],
         "boards": [{"key": p.key, "title": p.name, "part": p.index} for p in parts],
         "top_key": case.top_key,
-        "pockets": [{
-            "id": g.pocket.id, "hole": _poly_json(g.hole), "rect": list(g.rect.bounds),
-            "label_box": _poly_json(g.label_box), "label_fits": g.label_fits, "lid_band": _poly_json(g.lid_band),
-        } for g in lay.pockets],
+        "pockets": [{"id": g.pocket.id, "hole": _poly_json(g.hole), "label_box": _poly_json(g.label_box)}
+                    for g in lay.pockets],
         "magnets": [[round(x, 3), round(y, 3)] for x, y in lay.magnets],
         "magnet_r": C.MAGNET_R,
         "blocks": {"top_block": _block_json(lay.top, case.top_block), "lid_title": _block_json(lay.title, case.lid_title),
@@ -125,29 +126,36 @@ def editor(lay, parts):
         "hint": list(hint) if hint else None,
         "depth": round(case.pocket_boards * C.THICKNESS, 2),
         "logos": SHP.logo_files(),
-        "snap": C.SNAP, "air": case.air, "web": C.WEB, "magnet_wood": C.MAGNET_WOOD,
+        "snap": C.SNAP, "web": C.WEB, "magnet_wood": C.MAGNET_WOOD,
     }
 
 
 # ------------------------------------------------------------------ calls
+_cache = {}
+
+
 def _parts(req):
-    case = _case(req)
-    lay = L.Layout(case)
-    return case, lay, P.board_parts(lay)
+    """(case, layout, boards) for req, kept for the next call with the same case and material (the 3D's overlap check
+    right after a build, an export), as superboxes.api keeps a box's parts. Nothing changes them once made."""
+    case = _case(req)                    # sets the material every later step reads (config.use_material)
+    logo = SHP.logo_path(case.logo)
+    st = os.stat(logo) if logo else None
+    key = json.dumps([req.get("params") or {}, req.get("material") or {}, X.mark_text(), logo,
+                      [st.st_mtime_ns, st.st_size] if st else None], sort_keys=True)
+    if key not in _cache:
+        if len(_cache) > 8:
+            _cache.clear()
+        lay = L.Layout(case)
+        _cache[key] = case, lay, P.board_parts(lay)
+    return _cache[key]
 
 
 def build(req):
     sheet = req.get("sheet") or S.A3
     case, lay, parts = _parts(req)
-    sizes = [(p.w, p.h) for p in parts]
-    locked = S.keep_locked(sizes, req.get("layout"), sheet)
-    warnings = []
-    if req.get("layout") and len(locked) < len([p for p in req["layout"] if p.get("part", -1) < len(parts)]):
-        warnings.append("Some hand-placed boards no longer fit where they were and were packed again.")
-    placements, too_big = S.pack(sizes, sheet, locked=locked)
+    placements, too_big, warnings, sheets = S.place([(p.w, p.h) for p in parts], req.get("layout"), sheet, "boards")
     for i in too_big:
         warnings.append("%s is %.0f x %.0f mm: bigger than the cutting area." % (parts[i].name, parts[i].w, parts[i].h))
-    n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     out_parts = []
     for p in parts:
         j = p.to_json()
@@ -155,9 +163,7 @@ def build(req):
         out_parts.append(j)
     return {
         "ok": True, "title": _title(case), "parts": out_parts, "placements": placements, "too_big": too_big,
-        "assembly": assembly(lay, parts),
-        "sheets": [{"index": k, "offcut": round(S.offcut(placements, sizes, sheet, k), 1)} for k in range(n_sheets)],
-        "warnings": warnings,
+        "assembly": assembly(lay, parts), "sheets": sheets, "warnings": warnings,
         "info": {"cli": "", "thickness": C.THICKNESS, "burn": round((C.BURN_X + C.BURN_Y) / 2, 4),
                  "comp": [C.BURN_X, C.BURN_Y]},
         "boxes_version": boxes_version(), "mark": lay.mark, "stampcase": editor(lay, parts),
@@ -169,17 +175,10 @@ def export(req):
     case, lay, parts = _parts(req)
     if lay.errors:
         return {"ok": False, "error": "The case has problems to fix first:\n" + "\n".join(p.text for p in lay.errors)}
-    layout = req.get("layout")
-    if not layout:
-        layout, too_big = S.pack([(p.w, p.h) for p in parts], sheet)
-        if too_big:
-            return {"ok": False, "error": "A board is bigger than the cutting area."}
-    missing = set(range(len(parts))) - {pl["part"] for pl in layout}
-    if missing:
-        return {"ok": False, "error": "Boards without a place on a sheet: %s" % ", ".join(parts[i].name for i in sorted(missing))}
-    problems = X.check_layout(parts, layout, sheet)
-    if problems:
-        return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
+    layout, refused = X.export_layout(parts, req.get("layout"), sheet, noun="boards",
+                                      too_big="A board is bigger than the cutting area.")
+    if refused:
+        return {"ok": False, "error": refused}
     name = req.get("name") or (case.project.strip() or "stamp case")
     proj = B.project_files(lay, parts, layout, sheet, name, {"key": C.MATERIAL, "thickness": C.THICKNESS},
                            previous=req.get("previous"),

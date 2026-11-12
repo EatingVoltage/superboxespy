@@ -39,7 +39,6 @@ export interface Build {
   assembly?: unknown;
   stampcase?: StampData;       // StampCase only: what the board editor draws and hit-tests
   faces?: Record<string, FaceInfo>;   // the closed box's faces for the face editor (python/superboxes/faces.py)
-  logos?: string[];            // the logos folder's .svg and .lbrn2 files on this PC (serve.py)
 }
 
 /** A logo in the library (python faces.library): its size as drawn, whether it has filled shapes, and a preview's
@@ -119,8 +118,7 @@ export interface StampData {
   origin: [number, number];                 // design = part coordinates + origin
   boards: { key: string; title: string; part: number }[];
   top_key: string;
-  pockets: { id: string; hole: ShapePoly[]; rect: [number, number, number, number]; label_box: ShapePoly[] | null;
-             label_fits: boolean; lid_band: ShapePoly[] | null }[];
+  pockets: { id: string; hole: ShapePoly[]; label_box: ShapePoly[] | null }[];
   magnets: [number, number][];
   magnet_r: number;
   blocks: Record<BlockKey, { region: ShapePoly[] | null; x: number; y: number; size: number; rot: number; placed: boolean }>;
@@ -132,7 +130,7 @@ export interface StampData {
   hint: [number, string, number] | null;    // (mm smaller, "narrower" | "shorter", sheets then)
   depth: number;
   logos: string[];
-  snap: number; air: number; web: number; magnet_wood: number;
+  snap: number; web: number; magnet_wood: number;
 }
 
 export interface Param {

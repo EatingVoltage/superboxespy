@@ -10,11 +10,37 @@ const EDGE = 3;
 const GAP = 1.5;
 const NS = "http://www.w3.org/2000/svg";
 
-const svgEl = (tag: string, attrs: Record<string, any> = {}) => {
+// The 2D drawings' helpers (the sheets, the face editor, the stamp case's board editor)
+export const svgEl = (tag: string, attrs: Record<string, any> = {}) => {
   const el = document.createElementNS(NS, tag);
   for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, String(v));
   return el;
 };
+
+/** Path data through point lists: each closed (Z), or left open (lines), moved by (dx, dy), `digits` decimals (null:
+ *  the numbers as they are). */
+export function ringsD(rings: number[][][], closed = true, dx = 0, dy = 0, digits: number | null = 2): string {
+  const n = (v: number) => (digits == null ? String(v) : v.toFixed(digits));
+  return rings.map((r) => "M" + r.map(([x, y]) => `${n(x + dx)} ${n(y + dy)}`).join("L") + (closed ? "Z" : "")).join("");
+}
+
+/** Is (x, y) inside the ring (even-odd)? */
+export function insideRing(x: number, y: number, ring: number[][]): boolean {
+  let ins = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) ins = !ins;
+  }
+  return ins;
+}
+
+/** Where the pointer is in `el`'s own units (flipY: a drawing flipped to y up), or null while it isn't laid out. */
+export function clientToMM(el: SVGGraphicsElement, e: { clientX: number; clientY: number }, flipY = false): [number, number] | null {
+  const m = el.getScreenCTM();
+  if (!m) return null;
+  const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+  return [p.x, flipY ? -p.y : p.y];
+}
 
 export function pathD(subs: Subpath[]): string {
   const out: string[] = [];
@@ -265,9 +291,8 @@ export class SheetView {
         if (p.paths["30"]) pg.append(svgEl("path", { d: pathD(p.paths["30"]), class: "ref" }));
         if (p.paths["1"]) pg.append(svgEl("path", { d: pathD(p.paths["1"]), class: "line" }));
         for (const d of p.deco) {
-          const dd = d.lines.map((l) => "M" + l.map((q) => q.join(" ")).join("L") + (d.polys ? "Z" : "")).join("");
           // the inside faces' engraving is on the underside as cut: faint; a logo's fill (FILL) filled
-          pg.append(svgEl("path", { d: dd, "fill-rule": "evenodd",
+          pg.append(svgEl("path", { d: ringsD(d.lines, !!d.polys, 0, 0, null), "fill-rule": "evenodd",
             class: d.side === "in" ? "underside" : d.polys ? "fill" : d.layer === 1 ? "line" : "ref" }));
         }
         pg.append(svgEl("path", { d: pathD(cut), class: "cut" }));
@@ -287,9 +312,7 @@ export class SheetView {
   }
 
   private toSheet(g: SVGGElement, e: PointerEvent): [number, number] {
-    const m = g.getScreenCTM()!.inverse();
-    const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(m);
-    return [p.x, p.y];
+    return clientToMM(g, e)!;
   }
 
   private drag(e: PointerEvent, pl: Placement, pg: SVGGElement, frame: SVGGElement) {

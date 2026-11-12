@@ -9,20 +9,16 @@ from shapely import affinity
 from shapely.geometry import Point, Polygon, box
 from shapely.ops import unary_union
 
-from ..export import mark_text as _mark_text
+from ..export import mark_text  # noqa: F401 - the eVlaser maker's mark, the app's one definition (pack.py uses it)
 from . import config as C
 from . import labels as LB
 from . import magnets as MG
 from . import shapes as S
 from . import sheets as SH
 from .grid import FreeGrid
+from evlaser import geom as G
 from evlaser import machine as M
 from evlaser import textures
-
-
-def mark_text(day=None):
-    """eVlaser maker's mark (SG1026, SG826): the app's one definition, export.mark_text."""
-    return _mark_text(day)
 
 
 @dataclass
@@ -34,13 +30,10 @@ class PocketGeo:
     footprint: Polygon       # hole + strip: what auto layout spaces apart
     label: object = None     # B: the name next to its pocket, top pocket board (placed by labels.place)
     label_box: Polygon = None
-    label_cap: float = 0.0
     label_fits: bool = True
     lid_band: Polygon = None  # C: the lid's name, across the top end of the pocket's area
     lid_label: object = None
     base_label: object = None
-    base_cap: float = 0.0
-    base_fits: bool = True
 
 
 @dataclass
@@ -167,7 +160,7 @@ class Layout:
             hw, hh = p.hole_size(air)
             hole = S.hole(p, air)
             strip = S.strip(p, air)
-            self.pockets.append(PocketGeo(p, hole, S.rounded_rect(p.x, p.y, hw, hh, C.POCKET_R), strip,
+            self.pockets.append(PocketGeo(p, hole, G.rounded_rect(hw, hh, C.POCKET_R, p.x, p.y), strip,
                                           unary_union([hole, strip])))
         self.by_id = {g.pocket.id: g for g in self.pockets}
 
@@ -220,12 +213,11 @@ class Layout:
         pad = C.BASE_PAD
         best = None
         for rot, length, across in ((0, hw, hh), (90, hh, hw)):
-            c, ok = S.fit_cap(name, length - 2 * pad, min(C.BASE_CAP, across - 2 * pad), C.LABEL_MIN_CAP)
+            c, _ok = S.fit_cap(name, length - 2 * pad, min(C.BASE_CAP, across - 2 * pad), C.LABEL_MIN_CAP)
             if best is None or c > best[1] + 0.25:
-                best = (rot, c, ok)
-        rot, cap, fits = best
+                best = (rot, c)
+        rot, cap = best
         g.base_label = S.text(name, p.x + hw / 2, p.y + hh / 2, cap, rot=rot)
-        g.base_cap, g.base_fits = cap, fits
 
     # -------------------------------------------------------------- lid
     def _lid_free(self):

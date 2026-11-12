@@ -45,11 +45,6 @@ def _render(req):
     return _cache[key]
 
 
-def _valid_locked(parts, layout, sheet):
-    """Hand-placed parts that are still inside the area and clear of each other (sizes may have changed)."""
-    return S.keep_locked([(p.w, p.h) for p in parts], layout, sheet)
-
-
 def _title(req):
     p = req.get("params", {})
     vals = []
@@ -76,19 +71,13 @@ def build(req):
         return sc.build(req)
     sheet = req.get("sheet") or S.A3
     parts, info = _render(req)
-    locked = _valid_locked(parts, req.get("layout"), sheet)
-    warnings = []
-    if req.get("layout") and len(locked) < len([p for p in req["layout"] if p.get("part", -1) < len(parts)]):
-        warnings.append("Some hand-placed parts no longer fit where they were and were packed again.")
-    placements, too_big = S.pack([(p.w, p.h) for p in parts], sheet, locked=locked)
+    placements, too_big, warnings, sheets = S.place([(p.w, p.h) for p in parts], req.get("layout"), sheet)
     for i in too_big:
         _sw, _sh, usable = S.sheet_tuple(sheet)
         warnings.append("%s is %.0f x %.0f mm - bigger than the %g x %g cutting area. Make the box smaller."
                         % (parts[i].name, parts[i].w, parts[i].h, sheet["w"] - 2 * M.EDGE,
                            min(usable, sheet["h"] - M.EDGE) - M.EDGE))
     opts = req.get("options") or {}
-    sizes = [(p.w, p.h) for p in parts]
-    n_sheets = max((pl["sheet"] for pl in placements), default=-1) + 1
     asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
                             info.get("attrs"))
     parts, deco, deco_in, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
@@ -101,22 +90,23 @@ def build(req):
         out_parts.append(j)
     return {
         "ok": True, "title": _title(req), "parts": out_parts, "placements": placements, "too_big": too_big,
-        "assembly": asm,
-        "sheets": [{"index": n, "offcut": round(S.offcut(placements, sizes, sheet, n), 1)} for n in range(n_sheets)],
-        "warnings": warnings, "info": info, "boxes_version": catalog.boxes_version(),
-        "mark": (opts.get("mark") or {}).get("text") or X.mark_text(), "faces": face_info, "logos": F.logos(),
+        "assembly": asm, "sheets": sheets, "warnings": warnings, "info": info, "boxes_version": catalog.boxes_version(),
+        "mark": (opts.get("mark") or {}).get("text") or X.mark_text(), "faces": face_info,
     }
 
 
 def _deco_json(layer, g):
     """A decoration for the page: its lines; polygons (a logo's fill) as their rings, and as "polys" [[outer ring,
     hole, ...], ...] for the 3D to fill."""
-    r = lambda cs: [[round(x, 3), round(y, 3)] for x, y in cs]
     polys = lbrn._polys(g)
-    if polys:
-        return {"layer": layer, "lines": [r(ring.coords) for q in polys for ring in [q.exterior, *q.interiors]],
-                "polys": [[r(q.exterior.coords)] + [r(h.coords) for h in q.interiors] for q in polys]}
-    return {"layer": layer, "lines": [r(ls.coords) for ls in lbrn._lines(g)]}
+    if not polys:
+        return {"layer": layer, "lines": capture.coords_json(lbrn._lines(g), 3)}
+    rings = capture.coords_json(X.rings(g), 3)          # each polygon's outer ring, then its holes
+    grouped, k = [], 0
+    for q in polys:
+        grouped.append(rings[k:k + 1 + len(q.interiors)])
+        k += 1 + len(q.interiors)
+    return {"layer": layer, "lines": rings, "polys": grouped}
 
 
 def _mark_part(face_info):
@@ -148,17 +138,9 @@ def export(req):
         return sc.export(req)
     sheet = req.get("sheet") or S.A3
     parts, info = _render(req)
-    layout = req.get("layout")
-    if not layout:
-        layout, too_big = S.pack([(p.w, p.h) for p in parts], sheet)
-        if too_big:
-            return {"ok": False, "error": "Some parts are bigger than the cutting area."}
-    missing = set(range(len(parts))) - {pl["part"] for pl in layout}
-    if missing:
-        return {"ok": False, "error": "Parts without a place on a sheet: %s" % ", ".join(parts[i].name for i in sorted(missing))}
-    problems = X.check_layout(parts, layout, sheet, info["comp"])
-    if problems:
-        return {"ok": False, "error": "Layout breaks the sheet rules:\n" + "\n".join(problems)}
+    layout, refused = X.export_layout(parts, req.get("layout"), sheet, info["comp"])
+    if refused:
+        return {"ok": False, "error": refused}
     opts = req.get("options") or {}
     asm = assembly.assemble(req["generator"], parts, info["thickness"], layout, float(sheet["w"]), info.get("attrs"))
     parts, deco, deco_in, face_info, _w = _decorations(req, parts, asm, info)
@@ -171,11 +153,8 @@ def export(req):
     name = req.get("name") or req["generator"]
     mark = opts.get("mark") or {}
     if mark.get("enabled", True):
-        mi = mark.get("part")
-        mi = mi if mi is not None and mi < len(parts) else (_mark_part(face_info) if _mark_part(face_info) is not None
-                                                            else X.bottom_part(parts))
         mark_note = "Maker's mark %s on %s (LINE): assemble it with the mark facing out." % (
-            mark.get("text") or X.mark_text(), parts[mi].name)
+            mark.get("text") or X.mark_text(), parts[X.mark_part(parts, mark, _mark_part(face_info))].name)
     else:
         mark_note = "No maker's mark."
     proj = X.project_files(name, _title(req), parts, layout, deco, mat, sheet,

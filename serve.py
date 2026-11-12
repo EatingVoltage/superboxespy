@@ -77,28 +77,31 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             return
         super().do_GET()
 
-    def send_parts(self):
-        """GET /api/parts: the parts library's confirmed panel holes, as hole presets for the face editor
-        (part_holes). To this PC's own page only: the library is private."""
-        host = self.headers.get("Host", "")
+    def local_host(self):
+        """Asked for by a localhost name (no DNS rebinding: another site's name pointed at 127.0.0.1)."""
         port = self.server.server_address[1]
-        if host not in ("localhost:%d" % port, "127.0.0.1:%d" % port):
-            self.send_error(403)
-            return
-        body = json.dumps(part_holes()).encode("utf-8")
+        return self.headers.get("Host", "") in ("localhost:%d" % port, "127.0.0.1:%d" % port)
+
+    def send_body(self, body, kind):
         self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Type", kind)
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def send_parts(self):
+        """GET /api/parts: the parts library's confirmed panel holes, as hole presets for the face editor
+        (part_holes). To this PC's own page only: the library is private."""
+        if not self.local_host():
+            self.send_error(403)
+            return
+        self.send_body(json.dumps(part_holes()).encode("utf-8"), "application/json")
 
     def send_logo(self, name):
         """GET /api/logos: the house logos' names (JSON); /api/logos/<name>: one of them, an .svg or a LightBurn .lbrn2
         (.grill/logo-library.md). The logos are private and never ship with the app (.grill/stamp-case-merge.md): they
         come from Samuel's folder, to this PC's own page."""
-        host = self.headers.get("Host", "")
-        port = self.server.server_address[1]
-        if host not in ("localhost:%d" % port, "127.0.0.1:%d" % port):
+        if not self.local_host():
             self.send_error(403)
             return
         try:
@@ -113,11 +116,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         else:
             self.send_error(404)
             return
-        self.send_response(200)
-        self.send_header("Content-Type", kind)
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_body(body, kind)
 
     def read_body(self, limit=65536):
         """The whole request body, or None when it is bigger than `limit` (read anyway and dropped). Every POST reads
@@ -154,24 +153,17 @@ class Handler(http.server.SimpleHTTPRequestHandler):
             res = box_op(req) if self.path == BOX else open_in_lightburn(req)
         except Exception as e:   # noqa: BLE001 - every failure goes back to the page as text
             res = {"ok": False, "error": str(e)}
-        body = json.dumps(res).encode("utf-8")
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        self.send_body(json.dumps(res).encode("utf-8"), "application/json")
 
     def from_the_app(self):
         """Only the app's own page may ask: a JSON body (other sites can't send one without a CORS preflight, which
         this server never answers), a localhost Host (no DNS rebinding) and, when the browser says, the same origin."""
         if self.headers.get("Content-Type", "").split(";")[0].strip().lower() != "application/json":
             return False
-        host = self.headers.get("Host", "")
-        port = self.server.server_address[1]
-        if host not in ("localhost:%d" % port, "127.0.0.1:%d" % port):
+        if not self.local_host():
             return False
         origin = self.headers.get("Origin")
-        if origin is not None and origin != "http://" + host:
+        if origin is not None and origin != "http://" + self.headers.get("Host", ""):
             return False
         return self.headers.get("Sec-Fetch-Site", "same-origin") in ("same-origin", "none")
 
@@ -305,26 +297,35 @@ def process_name(pid):
         k32.CloseHandle(ctypes.c_void_p(h))
 
 
-def main_window(pid=None):
-    """The visible top-level, unowned window whose title names LightBurn: of process `pid`, or (pid None) of any
-    running LightBurn.exe. None when there is none."""
+def find_window(match):
+    """The first top-level window (front to back) that `match(hwnd)` accepts, or None."""
     ctypes, user32 = _user32()
     found = []
-    proto = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
 
     def each(hwnd, _):
-        owner = ctypes.c_ulong()
-        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(owner))
-        if ((pid is None or owner.value == pid) and user32.IsWindowVisible(ctypes.c_void_p(hwnd))
-                and not user32.GetWindow(ctypes.c_void_p(hwnd), 4)            # GW_OWNER: skip dialogs
-                and "lightburn" in window_title(hwnd).lower()
-                and (pid is not None or process_name(owner.value) == "lightburn.exe")):
+        if match(hwnd):
             found.append(hwnd)
             return False
         return True
 
-    user32.EnumWindows(proto(each), None)
+    user32.EnumWindows(ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)(each), None)
     return found[0] if found else None
+
+
+def main_window(pid=None):
+    """The visible top-level, unowned window whose title names LightBurn: of process `pid`, or (pid None) of any
+    running LightBurn.exe. None when there is none."""
+    ctypes, user32 = _user32()
+
+    def lightburn(hwnd):
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(owner))
+        return bool((pid is None or owner.value == pid) and user32.IsWindowVisible(ctypes.c_void_p(hwnd))
+                    and not user32.GetWindow(ctypes.c_void_p(hwnd), 4)        # GW_OWNER: skip dialogs
+                    and "lightburn" in window_title(hwnd).lower()
+                    and (pid is not None or process_name(owner.value) == "lightburn.exe"))
+
+    return find_window(lightburn)
 
 
 def raise_window(hwnd):
@@ -597,17 +598,8 @@ def app_window():
     if fg and window_title(fg).strip().lower() == APP_TITLE:
         return fg
     ctypes, user32 = _user32()
-    found = []
-    proto = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-    def each(hwnd, _):
-        if user32.IsWindowVisible(ctypes.c_void_p(hwnd)) and window_title(hwnd).strip().lower() == APP_TITLE:
-            found.append(hwnd)
-            return False
-        return True
-
-    user32.EnumWindows(proto(each), None)
-    return found[0] if found else None
+    return find_window(lambda hwnd: bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
+                       and window_title(hwnd).strip().lower() == APP_TITLE)
 
 
 # IFileDialog (Windows Vista and later), through its vtable: the older GetOpenFileName ignores the folder it's given and
