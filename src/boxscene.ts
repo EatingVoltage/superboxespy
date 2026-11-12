@@ -40,6 +40,10 @@ const ENGRAVE = new THREE.LineBasicMaterial({ color: 0x4a2c12 });
 const MAGNET = new THREE.MeshStandardMaterial({ color: 0x9aa3ad, roughness: 0.35, metalness: 0.8 });
 const STAMP = new THREE.MeshStandardMaterial({ color: 0x8c3b2f, roughness: 0.9, metalness: 0 });
 export const EDGES = new THREE.LineBasicMaterial({ color: 0x3b250f, transparent: true, opacity: 0.55 });
+// the magnets' and stamps' one solid each, scaled per instance; shared by every scene, never disposed
+const UNIT_CYLINDER = new THREE.CylinderGeometry(1, 1, 1, 20);
+const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1);
+const SHARED = new Set<THREE.BufferGeometry>([UNIT_CYLINDER, UNIT_BOX]);
 
 export function lights(scene: THREE.Scene) {
   scene.add(new THREE.HemisphereLight(0xfff4e0, 0x3a3f48, 2.2));
@@ -101,21 +105,30 @@ function slabEdges(polys: ShapePoly[], thickness: number) {
   return new THREE.BufferGeometry().setAttribute("position", new THREE.Float32BufferAttribute(out, 3));
 }
 
-/** Solids kept from one build to the next, keyed by outline: while a slider drags, only the parts that changed
- *  are triangulated again (HobbyCase's back panel alone takes ~100 ms). The owner calls sweep() after a build. */
+/** Solids and FILL areas kept from one build to the next, keyed by what they're made from: while a slider drags or
+ *  a face is edited, only the parts that changed are triangulated again (HobbyCase's back panel alone takes
+ *  ~100 ms; a filled logo's earcut ~10x its key). Engraved lines aren't kept: building them costs less than their
+ *  key would. The owner calls sweep() after a build. */
 export class GeometryCache {
-  private map = new Map<string, { geo: THREE.BufferGeometry; edges: THREE.BufferGeometry; used: boolean }>();
+  private map = new Map<string, { geos: THREE.BufferGeometry[]; used: boolean }>();
   private mine = new Set<THREE.BufferGeometry>();
-  get(polys: ShapePoly[], thickness: number) {
-    const key = `${thickness}|${JSON.stringify(polys)}`;
+  private entry(key: string, make: () => THREE.BufferGeometry[]) {
     let e = this.map.get(key);
     if (!e) {
-      e = { geo: solid(polys, thickness), edges: slabEdges(polys, thickness), used: false };
+      e = { geos: make(), used: false };
       this.map.set(key, e);
-      this.mine.add(e.geo).add(e.edges);
+      for (const g of e.geos) this.mine.add(g);
     }
     e.used = true;
-    return e;
+    return e.geos;
+  }
+  get(polys: ShapePoly[], thickness: number) {
+    const [geo, edges] = this.entry(`${thickness}|${JSON.stringify(polys)}`,
+      () => [solid(polys, thickness), slabEdges(polys, thickness)]);
+    return { geo, edges };
+  }
+  fill(polys: Pt[][][]) {
+    return this.entry(`fill|${JSON.stringify(polys)}`, () => [fillGeometry(polys)])[0];
   }
   owns(geo: THREE.BufferGeometry) {
     return this.mine.has(geo);
@@ -124,10 +137,10 @@ export class GeometryCache {
   sweep() {
     for (const [k, e] of this.map) {
       if (!e.used) {
-        e.geo.dispose();
-        e.edges.dispose();
-        this.mine.delete(e.geo);
-        this.mine.delete(e.edges);
+        for (const g of e.geos) {
+          g.dispose();
+          this.mine.delete(g);
+        }
         this.map.delete(k);
       } else e.used = false;
     }
@@ -137,17 +150,21 @@ export class GeometryCache {
 const ENGRAVE_FILL = new THREE.MeshBasicMaterial({ color: 0x4a2c12, side: THREE.DoubleSide, polygonOffset: true,
   polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
 
+/** FILL's areas ([outer, holes...] each) as triangles. */
+function fillGeometry(polys: Pt[][][]) {
+  return new THREE.ShapeGeometry(polys.map(([outer, ...holes]) => {
+    const s = new THREE.Shape(outer.map(([x, y]) => new THREE.Vector2(x, y)));
+    s.holes = holes.map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
+    return s;
+  }));
+}
+
 /** A logo's filled areas (FILL), as a burnt patch on the face they're engraved on. */
-function engravedFill(part: PartJ, thickness: number): THREE.Mesh[] {
+function engravedFill(part: PartJ, thickness: number, cache?: GeometryCache): THREE.Mesh[] {
   const out: THREE.Mesh[] = [];
   for (const d of part.deco) {
     if (!d.polys?.length) continue;
-    const shapes = d.polys.map(([outer, ...holes]) => {
-      const s = new THREE.Shape(outer.map(([x, y]) => new THREE.Vector2(x, y)));
-      s.holes = holes.map((r) => new THREE.Path(r.map(([x, y]) => new THREE.Vector2(x, y))));
-      return s;
-    });
-    const mesh = new THREE.Mesh(new THREE.ShapeGeometry(shapes), ENGRAVE_FILL);
+    const mesh = new THREE.Mesh(cache?.fill(d.polys) ?? fillGeometry(d.polys), ENGRAVE_FILL);
     mesh.position.z = d.side === "in" ? -0.02 : thickness + 0.02;
     out.push(mesh);
   }
@@ -175,6 +192,29 @@ function engraving(part: PartJ, thickness: number): THREE.LineSegments | null {
   return new THREE.LineSegments(geo, ENGRAVE);
 }
 
+// scratch for setPose, which runs every animation frame
+const _m = new THREE.Matrix4();
+const _v = new THREE.Vector3();
+
+/** The pose of a part (or piece) into M: the lid's hinge or slide at `open`, then the explode offset. */
+function poseInto(M: THREE.Matrix4, p: Placed3D, explode: number, open: number, assembled: boolean) {
+  M.identity();
+  const mo = p.motion;
+  if (mo?.type === "hinge" && open > 0) {
+    const [x, y, z] = mo.point;
+    M.makeTranslation(x, y, z)
+      .multiply(_m.makeRotationAxis(_v.set(...mo.axis).normalize(), THREE.MathUtils.degToRad(-mo.max * open)))
+      .multiply(_m.makeTranslation(-x, -y, -z));
+  } else if (mo?.type === "slide" && open > 0) {
+    _v.set(...mo.dir).multiplyScalar(mo.max * open);
+    M.makeTranslation(_v.x, _v.y, _v.z);
+  }
+  if (explode > 0 && assembled) {
+    _v.set(...p.explode).multiplyScalar(explode);
+    M.premultiply(_m.makeTranslation(_v.x, _v.y, _v.z));
+  }
+}
+
 export function motionLabel(asm: Assembly): string {
   const m = asm.parts.find((p) => p.motion)?.motion;
   if (!m) return "";
@@ -189,6 +229,14 @@ export function buildBoxScene(b: Build, thickness: number,
   if (!asm) return null;
   const root = new THREE.Group();
   const items: Item[] = [];
+  // each part's (and piece's) pose, worked out once per setPose for all that move with it
+  const poses = new Map<Placed3D, THREE.Matrix4>();
+  const poseOf = (p: Placed3D) => {
+    let M = poses.get(p);
+    if (!M) poses.set(p, M = new THREE.Matrix4());
+    return M;
+  };
+  const posed: { group: THREE.Group; pose: THREE.Matrix4; base: THREE.Matrix4 | null }[] = [];
   const add = (part: PartJ, place: Placed3D, polys: ShapePoly[] | null, withExtras: boolean) => {
     if (!polys) return;
     const { geo, edges } = opts.cache?.get(polys, thickness) ?? { geo: solid(polys, thickness), edges: slabEdges(polys, thickness) };
@@ -200,10 +248,12 @@ export function buildBoxScene(b: Build, thickness: number,
     if (withExtras) {
       const eng = engraving(part, thickness);
       if (eng) group.add(eng);
-      for (const m of engravedFill(part, thickness)) group.add(m);
+      for (const m of engravedFill(part, thickness, opts.cache)) group.add(m);
     }
     root.add(group);
-    items.push({ group, mesh, edges: lines, base: matrix4(place.m), place, part });
+    const base = matrix4(place.m);
+    items.push({ group, mesh, edges: lines, base, place, part });
+    posed.push({ group, pose: poseOf(place), base });
   };
   for (const part of b.parts) {
     const place = asm.parts[part.index];
@@ -214,57 +264,50 @@ export function buildBoxScene(b: Build, thickness: number,
       add(part, cp, c, false);
     });
   }
-  // magnets and stamps: posed like the part they belong to
-  const extras: { group: THREE.Group; place: Placed3D }[] = [];
+  // magnets and stamps: one group per part they belong to, posed like it, one instanced solid per material;
+  // they're in world coordinates of the assembled box, so the group takes the pose without the part's base
+  const owned = new Map<number, Map<THREE.Material, THREE.Matrix4[]>>();
+  const q = new THREE.Quaternion(), up = new THREE.Quaternion().setFromEuler(new THREE.Euler(Math.PI / 2, 0, 0));
+  const at = new THREE.Vector3(), size = new THREE.Vector3();
   for (const e of asm.extras ?? []) {
-    const place = asm.parts[e.part];
-    if (!place) continue;
-    let mesh: THREE.Mesh;
+    if (!asm.parts[e.part]) continue;
+    let mat: THREE.Material, m: THREE.Matrix4;
     if (e.kind === "cylinder") {
-      mesh = new THREE.Mesh(new THREE.CylinderGeometry(e.r, e.r, e.h, 20), MAGNET);
-      mesh.rotation.x = Math.PI / 2;                       // three's cylinders stand on Y; ours on Z
-      mesh.position.set(e.at[0], e.at[1], e.at[2] + e.h / 2);
+      mat = MAGNET;                                        // three's cylinders stand on Y; ours on Z
+      m = new THREE.Matrix4().compose(at.set(e.at[0], e.at[1], e.at[2] + e.h / 2), up, size.set(e.r, e.h, e.r));
     } else {
       const [x0, y0, z0] = e.lo, [x1, y1, z1] = e.hi;
-      mesh = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0), e.bad ? BAD : STAMP);
-      mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+      mat = e.bad ? BAD : STAMP;
+      m = new THREE.Matrix4().compose(at.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2), q,
+        size.set(x1 - x0, y1 - y0, z1 - z0));
     }
+    let byMat = owned.get(e.part);
+    if (!byMat) owned.set(e.part, byMat = new Map());
+    const list = byMat.get(mat);
+    if (list) list.push(m);
+    else byMat.set(mat, [m]);
+  }
+  for (const [part, byMat] of owned) {
     const group = new THREE.Group();
     group.matrixAutoUpdate = false;
-    group.add(mesh);
+    for (const [mat, ms] of byMat) {
+      const mesh = new THREE.InstancedMesh(mat === MAGNET ? UNIT_CYLINDER : UNIT_BOX, mat, ms.length);
+      ms.forEach((m, i) => mesh.setMatrixAt(i, m));
+      group.add(mesh);
+    }
     root.add(group);
-    extras.push({ group, place });
+    posed.push({ group, pose: poseOf(asm.parts[part]), base: null });
   }
-  const tmp = new THREE.Matrix4();
-  const poseMatrix = (p: Placed3D, explode: number, open: number) => {
-    const M = new THREE.Matrix4();
-    const mo = p.motion;
-    if (mo?.type === "hinge" && open > 0) {
-      const pt = new THREE.Vector3(...mo.point);
-      M.makeTranslation(pt.x, pt.y, pt.z)
-        .multiply(tmp.makeRotationAxis(new THREE.Vector3(...mo.axis).normalize(), THREE.MathUtils.degToRad(-mo.max * open)))
-        .multiply(new THREE.Matrix4().makeTranslation(-pt.x, -pt.y, -pt.z));
-    } else if (mo?.type === "slide" && open > 0) {
-      const d = new THREE.Vector3(...mo.dir).multiplyScalar(mo.max * open);
-      M.makeTranslation(d.x, d.y, d.z);
-    }
-    if (explode > 0 && asm.kind === "assembled") {
-      const e = new THREE.Vector3(...p.explode).multiplyScalar(explode);
-      M.premultiply(new THREE.Matrix4().makeTranslation(e.x, e.y, e.z));
-    }
-    return M;
-  };
+  const assembled = asm.kind === "assembled";
   const scene: BoxScene = {
     root, items, asm,
     hasMotion: asm.parts.some((p) => p.motion),
     motionLabel: motionLabel(asm),
     setPose(explode, open) {
-      for (const it of items) {
-        it.group.matrix.copy(poseMatrix(it.place, explode, open).multiply(it.base));
-        it.group.matrixWorldNeedsUpdate = true;
-      }
-      for (const x of extras) {
-        x.group.matrix.copy(poseMatrix(x.place, explode, open));
+      for (const [p, M] of poses) poseInto(M, p, explode, open, assembled);
+      for (const x of posed) {
+        if (x.base) x.group.matrix.multiplyMatrices(x.pose, x.base);
+        else x.group.matrix.copy(x.pose);
         x.group.matrixWorldNeedsUpdate = true;
       }
     },
@@ -277,8 +320,9 @@ export function buildBoxScene(b: Build, thickness: number,
     },
     dispose() {
       root.traverse((o) => {
+        if (o instanceof THREE.InstancedMesh) o.dispose();     // its instance matrices
         const g = (o as THREE.Mesh).geometry;
-        if (g && !opts.cache?.owns(g)) g.dispose();
+        if (g && !SHARED.has(g) && !opts.cache?.owns(g)) g.dispose();
       });
     },
   };
