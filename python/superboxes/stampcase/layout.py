@@ -73,6 +73,18 @@ def top_block_extent(case, size, mark):
     return sum(w for _, _, w in parts) + gap * (len(parts) - 1), max(h for _, h, _ in parts)
 
 
+def _block_region(length, thick, x, y, rot):
+    region = box(-length / 2, -thick / 2, length / 2, thick / 2)
+    if rot:
+        region = affinity.rotate(region, rot, origin=(0, 0))
+    return affinity.translate(region, x, y)
+
+
+def top_block_region(case, x, y, size, rot, mark):
+    """What the top board's block claims (top_block_geo's region), without drawing its text and logo."""
+    return _block_region(*top_block_extent(case, size, mark), x, y, rot)
+
+
 def top_block_geo(case, x, y, size, rot, mark):
     parts = top_block_parts(case, size, mark)
     gap = 0.6 * size
@@ -87,11 +99,10 @@ def top_block_geo(case, x, y, size, rot, mark):
             polys.append(S.text(case.project if kind == "name" else mark, cx, 0, h, C.FONT_BOLD))
         cur += w + gap
     polys, lines = unary_union(polys), unary_union(lines)
-    thick = max(h for _, h, _ in parts)
-    region = box(-length / 2, -thick / 2, length / 2, thick / 2)
+    region = _block_region(length, max(h for _, h, _ in parts), x, y, rot)
     if rot:
-        polys, lines, region = (affinity.rotate(g, rot, origin=(0, 0)) for g in (polys, lines, region))
-    polys, lines, region = (affinity.translate(g, x, y) for g in (polys, lines, region))
+        polys, lines = (affinity.rotate(g, rot, origin=(0, 0)) for g in (polys, lines))
+    polys, lines = (affinity.translate(g, x, y) for g in (polys, lines))
     return BlockGeo(polys, lines, region, size, rot, x, y)
 
 

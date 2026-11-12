@@ -16,7 +16,7 @@ from shapely.ops import unary_union
 from . import config as C
 from . import shapes as S
 from . import sheets as SH
-from .layout import auto_top_block, board_rect, mark_text, top_block_geo
+from .layout import auto_top_block, board_rect, mark_text, top_block_region
 
 MODES = ("notch", "side", "end")
 NOT_NOTCH_PENALTY = 1.03   # a strip layout must beat names-beside-the-notch by more than 3 % of board area
@@ -119,8 +119,9 @@ def _gap(a, b, interlocked):
     return max(C.WEB + notch, strips + notch)
 
 
-def _row(pockets, air, mode):
-    """Lay out one row at y = 0 from x = 0; returns its (holes, strips)."""
+def _row_x(pockets, air, mode):
+    """One row's notches and name places, and x from the analytic gaps, at y = 0 from x = 0; returns where its last
+    hole ends."""
     pairs = [(pockets[k], pockets[k + 1]) for k in range(0, len(pockets) - 1, 2)]
     alternate = mode != "notch" and all(_interlocks(a, b, air) for a, b in pairs)
     for k, p in enumerate(pockets):
@@ -135,6 +136,12 @@ def _row(pockets, air, mode):
             x += _gap(pockets[k - 1], p, alternate)
         p.x = x
         x += p.hole_size(air)[0]
+    return x
+
+
+def _row(pockets, air, mode):
+    """Lay out one row at y = 0 from x = 0; returns its (holes, strips)."""
+    _row_x(pockets, air, mode)
     # the analytic gaps never need more, but nudge if they do: each pocket against each one before it (the same as
     # against their union, without building it per pocket)
     done = []
@@ -173,16 +180,17 @@ def _stack(rows, groups, air):
 
 def _board_of(case, pockets):
     """The board's size for these pockets. board_rect reads only bounds and the largest x + y, the same for a plain
-    collection of the shapes as for their union, so none is built (the unions were a third of a Re-pack)."""
+    collection of the shapes as for their union, so none is built (the unions were a third of a Re-pack), and of
+    the top block only the region it claims."""
     air = case.air
     mark = mark_text()
     holes = [S.hole(p, air) for p in pockets]
     every_strip = [S.strip(p, air) for p in pockets]
     strips = [g for p, g in zip(pockets, every_strip) if p.label_pos != "notch"]
     content = tuple(shapely.total_bounds(holes + every_strip).tolist())     # the footprints' bounds
-    top = top_block_geo(case, *auto_top_block(case, content, mark), mark)
+    top = top_block_region(case, *auto_top_block(case, content, mark), mark)
     extra = [(GeometryCollection(strips), C.TEXT_EDGE - C.TEXT_CUT)] if strips else []
-    x0, y0, x1, y1 = board_rect(GeometryCollection(holes + [top.region]), extra)
+    x0, y0, x1, y1 = board_rect(GeometryCollection(holes + [top]), extra)
     return x1 - x0, y1 - y0
 
 
@@ -191,26 +199,55 @@ def _sheets(case, w, h):
     return SH.sheet_count(w, h, case.board_count) or math.inf
 
 
+def _least_board(order, per_row, mode, air):
+    """(width, height) the board of rows of `per_row` pockets can't come out below: each row as long as its analytic
+    gaps make it (_row only ever nudges further apart), and each row's first pocket (at x = 0, so straight edges
+    over straight edges) at least WEB above the row below's first one (_stack); RIM all round. None for pockets too
+    small for that (a hole no wider than its corners). Sets the pockets' notches and x as _row does."""
+    rows = [order[i:i + per_row] for i in range(0, len(order), per_row)]
+    if any(min(p.hole_size(air)) <= 2 * C.POCKET_R + 1e-6 for p in order):
+        return None
+    return (max(_row_x(r, air, mode) for r in rows) + 2 * C.RIM - 1e-3,
+            sum(r[0].hole_size(air)[1] for r in rows) + (len(rows) - 1) * (C.WEB - 1e-6) + 2 * C.RIM - 1e-3)
+
+
+def _least_score(case, order, per_row, mode):
+    """The (sheets, area) of the score a layout can't come out below: those of its least board (fewer sheets and
+    less area than any real one: sheets only grow with the board)."""
+    least = _least_board(order, per_row, mode, case.air)
+    if least is None:
+        return (0, 0)
+    w, h = least
+    return (_sheets(case, w, h), round(w * h * (1.0 if mode == "notch" else NOT_NOTCH_PENALTY)))
+
+
 def repack(case):
-    """Lay every pocket out fresh; the top board's block, the lid's title and logo and the magnets go back to auto."""
+    """Lay every pocket out fresh; the top board's block, the lid's title and logo and the magnets go back to auto.
+    Every mode with every row length competes: the best score wins, the first of them (MODES, then row length) on
+    a tie. They're laid out most promising first, and once the least a layout could score is worse than the best
+    so far, it and the rest can't win and aren't laid out (most of a big Re-pack was layouts that couldn't fit a
+    sheet, 2026-11-12)."""
     air = case.air
     for p in case.pockets:
         if p.w > p.h:
             p.w, p.h = p.h, p.w
     order = sorted(case.pockets, key=lambda p: (-p.h, -p.w))
+    runs = sorted((_least_score(case, order, per_row, mode), i, mode, per_row)
+                  for i, (mode, per_row) in enumerate((m, n) for m in MODES for n in range(1, len(order) + 1)))
     best = None
-    for mode in MODES:
-        for per_row in range(1, len(order) + 1):
-            rows = [order[i:i + per_row] for i in range(0, len(order), per_row)]
-            _stack(rows, [_row(r, air, mode) for r in rows], air)
-            snapshot = [(p, p.notch_side, p.notch_end, p.label_pos, p.x, p.y) for p in order]
-            w, h = _board_of(case, order)
-            area = w * h * (1.0 if mode == "notch" else NOT_NOTCH_PENALTY)
-            score = (_sheets(case, w, h), round(area), abs(w - h))
-            if best is None or score < best[0]:
-                best = (score, snapshot)
+    for least, i, mode, per_row in runs:
+        if best is not None and least > best[0][:2]:
+            break
+        rows = [order[k:k + per_row] for k in range(0, len(order), per_row)]
+        _stack(rows, [_row(r, air, mode) for r in rows], air)
+        snapshot = [(p, p.notch_side, p.notch_end, p.label_pos, p.x, p.y) for p in order]
+        w, h = _board_of(case, order)
+        area = w * h * (1.0 if mode == "notch" else NOT_NOTCH_PENALTY)
+        score = (_sheets(case, w, h), round(area), abs(w - h))
+        if best is None or (score, i) < best[:2]:
+            best = (score, i, snapshot)
     if best:
-        for p, side, end, label_pos, x, y in best[1]:
+        for p, side, end, label_pos, x, y in best[2]:
             _set(p, side, end, round(x, 3), round(y, 3))
             p.label_pos = label_pos
     case.top_block.placed = False
@@ -233,7 +270,7 @@ def place_new(case, pocket, near=None):
     block = None
     if case.top_block.placed:
         tb = case.top_block
-        block = top_block_geo(case, tb.x, tb.y, tb.size, tb.rot, mark_text()).region.buffer(C.BLOCK_WOOD)
+        block = top_block_region(case, tb.x, tb.y, tb.size, tb.rot, mark_text()).buffer(C.BLOCK_WOOD)
     hw, hh = pocket.hole_size(air)
     nx, ny = near.centre(air) if near else (0.0, 0.0)
     best = None
