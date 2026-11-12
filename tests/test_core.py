@@ -123,6 +123,8 @@ class Sheets(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             self.skipTest("no Node.js")
+        if not os.path.isdir(os.path.join(os.path.dirname(__file__), "..", "node_modules", "rolldown")):
+            self.skipTest("no node_modules (npm install): rest_pieces.mjs bundles sheetview.ts with rolldown")
         mat = {"key": "poplar3.6", "thickness": 3.7, "kerf_x": 0.33, "kerf_y": 0.26, "burn_x": 0.165, "burn_y": 0.13}
         cases, want = [], []
         for name in catalog.GENERATORS:
@@ -139,12 +141,9 @@ class Sheets(unittest.TestCase):
             f = os.path.join(d, "cases.json")
             with open(f, "w", encoding="utf-8") as fh:
                 json.dump(cases, fh)
-            run = subprocess.run([node, "--experimental-transform-types", "--no-warnings",
-                                  os.path.join(os.path.dirname(__file__), "rest_pieces.mjs"), f],
+            run = subprocess.run([node, "--no-warnings", os.path.join(os.path.dirname(__file__), "rest_pieces.mjs"), f],
                                  capture_output=True, text=True, timeout=60,
                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        if run.returncode and "transform-types" in run.stderr:
-            self.skipTest("this Node.js can't run TypeScript")
         self.assertEqual(run.returncode, 0, run.stderr)
         got = json.loads(run.stdout)
         for name, g, w in zip(catalog.GENERATORS, got, want):
