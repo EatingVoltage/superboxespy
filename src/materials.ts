@@ -129,8 +129,19 @@ export interface Comp {
   status: "measured" | "kerf" | "default";
 }
 
-/** What a box is cut with for this fit. */
-export function compensation(p: MaterialProfile, fit: Fit): Comp {
+/** The kerf a stamp case is cut with while its material's isn't measured: the poplar values stampcaser had fixed in
+ *  (python/superboxes/stampcase/config.py has the same defaults). */
+const STAMP_KERF = { x: 0.33, y: 0.26 };
+
+/** What a box is cut with for this fit. fit null: no fit on top - the stamp case, where the air around each stamp is
+ *  the fit - so kerf / 2 per axis exactly as measured (never the mean, never rounded). */
+export function compensation(p: MaterialProfile, fit: Fit | null): Comp {
+  if (fit == null) {
+    const measured = p.kerfX != null || p.kerfY != null;
+    const bx = (measured ? p.kerfX ?? p.kerfY! : STAMP_KERF.x) / 2;
+    const by = (measured ? p.kerfY ?? p.kerfX! : STAMP_KERF.y) / 2;
+    return { burn: (bx + by) / 2, bx, by, perAxis: true, delta: 0, status: measured ? "measured" : "default" };
+  }
   const base = baseBurn(p);
   const won = fit === "press" ? p.fitPress : p.fitGlue;
   const delta = won ?? 0;

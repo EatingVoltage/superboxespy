@@ -179,8 +179,10 @@ export interface BoxConfig {
   generator: string;
   boxes_version: string;
   params: Record<string, any>;
+  // per axis: burn_x / burn_y, always for a stamp case (kerf / 2, no fit); stamp case files before 2026-11-12 also
+  // carry that kerf (kerf_x / kerf_y), unread now
   material: { key: string; thickness: number; fit: Fit; burn: number; burn_x?: number; burn_y?: number;
-              kerf_x?: number; kerf_y?: number };   // kerf: what a stamp case is cut with (kerf / 2, no fit)
+              kerf_x?: number; kerf_y?: number };
   sheet: Sheet;
   layout: Placement[] | null;  // the hand-arranged layout, null = packed automatically
   options: Options;

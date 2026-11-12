@@ -15,21 +15,28 @@ MATERIAL = "poplar3.6"                   # eVlaser key: poplar sold as 4 mm
 THICKNESS = M.MATERIALS[MATERIAL]["thickness"]
 SHEET = M.MATERIALS[MATERIAL]["sheet"]
 # kerf per axis: the material profile's, set by use_material() for every request. These defaults are the values
-# measured 2026-10-11 (superboxespy 00a) that stampcaser had fixed in.
+# measured 2026-10-11 (superboxespy 00a) that stampcaser had fixed in (the page has them too: src/materials.ts).
 KERF_X, KERF_Y = 0.33, 0.26
 BURN_X, BURN_Y = KERF_X / 2, KERF_Y / 2  # each cut path moves this far into the waste. No fit on top: the 1 mm of air
 #                                          around a stamp is the fit, and magnet holes are drawn without any offset
 
 
 def use_material(material):
-    """Take thickness and kerf from the request's material ({"key", "thickness", "kerf_x", "kerf_y"}); missing values
-    keep the defaults above."""
+    """Take thickness and burn from the request's material: {"key", "thickness", "burn_x", "burn_y"}, the page's
+    compensation without a fit (kerf / 2 per axis), as every box type gets it. A request with only "kerf_x" /
+    "kerf_y" (stampcaser, older pages) is cut with half of that; missing values keep the defaults above."""
     global MATERIAL, THICKNESS, SHEET, KERF_X, KERF_Y, BURN_X, BURN_Y
     material = material or {}
     if material.get("key") in M.MATERIALS:
         MATERIAL = material["key"]
         SHEET = M.MATERIALS[MATERIAL]["sheet"]
     THICKNESS = float(material.get("thickness") or M.MATERIALS[MATERIAL]["thickness"])
+    bx, by = material.get("burn_x"), material.get("burn_y")
+    if bx is not None or by is not None:
+        BURN_X = float(bx if bx is not None else by)
+        BURN_Y = float(by if by is not None else bx)
+        KERF_X, KERF_Y = 2 * BURN_X, 2 * BURN_Y
+        return
     kx, ky = material.get("kerf_x"), material.get("kerf_y")
     KERF_X = float(kx if kx is not None else ky if ky is not None else 0.33)
     KERF_Y = float(ky if ky is not None else kx if kx is not None else 0.26)

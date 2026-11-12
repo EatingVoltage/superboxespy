@@ -31,7 +31,6 @@ const S = {
   fit: "press" as Fit,
   compOverride: null as { burn: number; bx: number; by: number } | null,  // burns of an opened file that differ from the profile
   thicknessOverride: null as number | null,
-  kerfOverride: null as { x: number; y: number } | null,                  // a stamp case file's kerf, if not the profile's
   sheet: A3 as Sheet,
   faces: {} as Faces,            // the face editor's items per face (not for the stamp case: its boards are its faces)
   boards: {} as Record<string, number>,   // per wall: the board's top above the inside floor, mm
@@ -74,11 +73,13 @@ function profile() {
 
 const f3 = (v: number) => v.toFixed(3).replace(/0$/, "");
 
-/** What the box is cut with: the profile's compensation for the chosen fit, or the values a box file brought. */
-function material() {
+/** What a box of type `gen` is cut with: the profile's compensation for the chosen fit - a stamp case has none on
+ *  top of kerf / 2, the air around each stamp is its fit - or the values the box file brought. */
+function material(gen = S.generator) {
   const p = profile();
-  const c = mats.compensation(p, S.fit);
-  const o = S.compOverride;
+  const stamp = isStamp(gen);
+  const c = mats.compensation(p, stamp ? null : S.fit);
+  const o = stamp === isStamp() ? S.compOverride : null;     // a file's own values are for its own type
   const bx = o ? o.bx : c.bx;
   const by = o ? o.by : c.by;
   const axis = Math.abs(bx - by) >= 0.0005;
@@ -89,20 +90,11 @@ function material() {
     : c.status === "measured" ? `${S.fit} fit ${c.delta >= 0 ? "+" : ""}${c.delta.toFixed(2)}, ${what} (measured)`
     : c.status === "kerf" ? `${what} = measured kerf / 2 (${S.fit} fit not tested yet)`
     : `${what} - UNCONFIRMED, cut the 00a/00b calibration sheets first`;
-  const k = kerf();
   return {
     key: p.key, thickness: t, burn, fit: S.fit, status: c.status, fit_note: note,
-    ...(axis ? { burn_x: bx, burn_y: by } : {}),
-    ...(k ? { kerf_x: k.x, kerf_y: k.y } : {}),
+    // per axis when X and Y differ; a stamp case always (its kerf / 2 as measured, never the mean)
+    ...(axis || stamp ? { burn_x: bx, burn_y: by } : {}),
   };
-}
-
-/** The kerf a stamp case is cut with (it takes kerf / 2 per axis and no fit): a file's own, else the profile's. */
-function kerf(): { x: number; y: number } | null {
-  if (S.kerfOverride) return S.kerfOverride;
-  const p = profile();
-  if (p.kerfX == null && p.kerfY == null) return null;
-  return { x: p.kerfX ?? p.kerfY!, y: p.kerfY ?? p.kerfX! };
 }
 
 let materialOpen = false;      // the Material section unfolded: it folds to one line once the material is measured
@@ -113,18 +105,17 @@ function renderMaterial() {
   const el = $("material");
   const p = profile();
   const m = material();
-  const k = kerf();
-  const measured = isStamp() ? !!k && !S.kerfOverride && S.thicknessOverride == null
-    : m.status === "measured" && !S.compOverride && S.thicknessOverride == null;
+  const stamp = isStamp();     // shows its kerf (it takes kerf / 2 per axis, no fit); any other box its burn and fit
+  const measured = m.status === "measured" && !S.compOverride && S.thicknessOverride == null;
   const folded = measured && !materialOpen;
   el.classList.toggle("folded", folded);
+  const values = stamp ? `X ${f3(2 * m.burn_x!)} · Y ${f3(2 * m.burn_y!)} mm`
+    : m.burn_x != null ? `X ${f3(m.burn_x)} · Y ${f3(m.burn_y!)} mm` : `${f3(m.burn)} mm`;
   if (folded) {
-    const values = isStamp() ? `kerf X ${f3(k!.x)} · Y ${f3(k!.y)} mm`
-      : m.burn_x != null ? `burn X ${f3(m.burn_x)} · Y ${f3(m.burn_y!)} mm` : `burn ${f3(m.burn)} mm`;
     const line = h("button", { type: "button", class: "material-line", "aria-expanded": "false",
-      title: `${p.label}, ${m.thickness} mm thick\n${values}\nClick for the material, the fit and Calibrate…` },
+      title: `${p.label}, ${m.thickness} mm thick\n${stamp ? "kerf" : "burn"} ${values}\nClick for the material, the fit and Calibrate…` },
       h("span", { class: "material-name" }, p.label.replace(/\s*\(.*\)\s*$/, "")),
-      h("span", { class: "material-what" }, isStamp() ? "· kerf" : `· ${S.fit} fit`),
+      h("span", { class: "material-what" }, stamp ? "· kerf" : `· ${S.fit} fit`),
       h("span", { class: "chip-status measured" }, "measured"), h("span", { class: "fold-mark", "aria-hidden": "true" }, "▸"));
     line.onclick = () => {
       materialOpen = true;
@@ -145,46 +136,46 @@ function renderMaterial() {
   for (const q of mats.all()) sel.append(h("option", { value: q.key, selected: q.key === p.key }, q.label));
   sel.onchange = () => {
     S.materialKey = sel.value;
-    S.compOverride = S.thicknessOverride = S.kerfOverride = null;
+    S.compOverride = S.thicknessOverride = null;
     changed(true);
     renderMaterial();
   };
   el.append(h("div", { class: "row" }, sel));
-  if (isStamp()) {
-    renderStampMaterial(el, m.thickness);
-    return;
+  if (!stamp) {                // a stamp case has no press or glue fit
+    const seg = h("div", { class: "seg", role: "group", "aria-label": "Fit" });
+    for (const f of ["press", "glue"] as Fit[]) {
+      const b = h("button", { "aria-pressed": S.fit === f }, f === "press" ? "Press fit" : "Glue fit");
+      b.onclick = () => {
+        S.fit = f;
+        S.compOverride = null;
+        changed(true);
+        renderMaterial();
+      };
+      seg.append(b);
+    }
+    el.append(h("div", { class: "row" }, seg));
   }
-  const seg = h("div", { class: "seg", role: "group", "aria-label": "Fit" });
-  for (const f of ["press", "glue"] as Fit[]) {
-    const b = h("button", { "aria-pressed": S.fit === f }, f === "press" ? "Press fit" : "Glue fit");
-    b.onclick = () => {
-      S.fit = f;
-      S.compOverride = null;
-      changed(true);
-      renderMaterial();
-    };
-    seg.append(b);
-  }
-  el.append(h("div", { class: "row" }, seg));
   const chip = h("span", { class: `chip-status ${S.compOverride ? "kerf" : m.status}` },
     S.compOverride ? "from file" : m.status === "measured" ? "measured" : m.status === "kerf" ? "from kerf" : "unconfirmed");
-  const burnText = m.burn_x != null ? `X ${f3(m.burn_x)} · Y ${f3(m.burn_y!)} mm` : `${f3(m.burn)} mm`;
+  const title = stamp ? "Outlines and pockets get half the kerf per axis; magnet holes are drawn as they are"
+    : m.burn_x != null ? "Per-axis kerf compensation: your spot cuts wider in one axis" : "";
+  const shown = stamp && m.status === "default" && !S.compOverride ? "not measured" : values;
   el.append(h("div", { class: "readout" }, h("span", {}, "Thickness ", h("b", {}, `${m.thickness} mm`)),
-    h("span", { title: m.burn_x != null ? "Per-axis kerf compensation: your spot cuts wider in one axis" : "" },
-      "Burn ", h("b", {}, burnText), " ", chip)), calibrateRow());
+    h("span", { title }, stamp ? "Kerf " : "Burn ", h("b", {}, shown), " ", chip)), calibrateRow());
   if (S.compOverride || S.thicknessOverride != null) {
-    el.append(overrideNotice("box"));
+    el.append(overrideNotice(stamp ? "case" : "box"));
   } else if (m.status === "default") {
-    el.append(h("div", { class: "notice" }, "Burn 0.10 is boxes.py's default, never measured on your Falcon2. Cut the calibration sheets (Calibrate…) before cutting boxes you care about."));
+    el.append(h("div", { class: "notice" }, stamp
+      ? "The kerf of this material hasn't been measured: cut the 00a kerf test first (Calibrate…). Until then the case uses 0.33 / 0.26."
+      : "Burn 0.10 is boxes.py's default, never measured on your Falcon2. Cut the calibration sheets (Calibrate…) before cutting boxes you care about."));
   }
 }
 
-/** A file saved with other material values than the profile's: say so, with a way back to the profile. (A stamp
- *  case only ever has a kerf override, any other box only a burn one: clearing all three clears what's there.) */
+/** A file saved with other material values than the profile's: say so, with a way back to the profile. */
 function overrideNotice(what: "box" | "case") {
   const use = h("button", {}, "Use the material profile instead");
   use.onclick = () => {
-    S.compOverride = S.thicknessOverride = S.kerfOverride = null;
+    S.compOverride = S.thicknessOverride = null;
     changed(true);
     renderMaterial();
   };
@@ -195,21 +186,6 @@ function overrideNotice(what: "box" | "case") {
 function calibrateRow() {
   return h("div", { class: "row calib-row" },
     btn("Calibrate…", "Cut and measure the kerf test and the fit comb for this material", () => tab("calib")));
-}
-
-/** A stamp case has no press or glue fit (the 1 mm of air around each stamp is the fit): kerf / 2 per axis. */
-function renderStampMaterial(el: HTMLElement, thickness: number) {
-  const k = kerf();
-  const kt = k ? `X ${f3(k.x)} · Y ${f3(k.y)} mm` : "not measured";
-  el.append(h("div", { class: "readout" }, h("span", {}, "Thickness ", h("b", {}, `${thickness} mm`)),
-    h("span", { title: "Outlines and pockets get half the kerf per axis; magnet holes are drawn as they are" }, "Kerf ", h("b", {}, kt), " ",
-      h("span", { class: `chip-status ${S.kerfOverride ? "kerf" : k ? "measured" : "default"}` }, S.kerfOverride ? "from file" : k ? "measured" : "unconfirmed"))),
-    calibrateRow());
-  if (S.kerfOverride || S.thicknessOverride != null) {
-    el.append(overrideNotice("case"));
-  } else if (!k) {
-    el.append(h("div", { class: "notice" }, "The kerf of this material hasn't been measured: cut the 00a kerf test first (Calibrate…). Until then the case uses 0.33 / 0.26."));
-  }
 }
 
 // ------------------------------------------------------------------ output options
@@ -546,11 +522,8 @@ function config(): BoxConfig {
   return {
     app: "superboxespy", version: 1, name: S.name, generator: S.generator, boxes_version: S.boxesVersion,
     params: { ...S.params },
-    material: isStamp() && m.kerf_x != null
-      ? { key: m.key, thickness: m.thickness, fit: S.fit, burn: (m.kerf_x + m.kerf_y!) / 4, burn_x: m.kerf_x / 2,
-          burn_y: m.kerf_y! / 2, kerf_x: m.kerf_x, kerf_y: m.kerf_y }
-      : { key: m.key, thickness: m.thickness, fit: S.fit, burn: m.burn,
-          ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
+    material: { key: m.key, thickness: m.thickness, fit: S.fit, burn: m.burn,
+      ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
     sheet: S.sheet,
     layout: S.manual.size ? S.placements : null,
     options: S.options, ...(Object.keys(S.faces).length ? { faces: S.faces } : {}),
@@ -567,18 +540,16 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
   S.params = isStamp() ? sc.normalise(c.params) as unknown as Record<string, any> : { ...defaults(groups), ...c.params };
   S.materialKey = mats.get(c.material?.key ?? "poplar3.6").key;
   S.fit = c.material?.fit ?? "press";
-  // a saved box keeps the burns it was made with; the side panel offers to switch to the current profile
-  const prof = mats.compensation(mats.get(S.materialKey), S.fit);
+  // a saved box keeps the burns it was made with; the side panel offers to switch to the current profile. A stamp
+  // case's own burns are per axis (burn_x / burn_y): one saved without them, while its kerf wasn't measured, has a
+  // box's burn in the file, not what it was cut with, and follows the profile
+  const prof = mats.compensation(mats.get(S.materialKey), isStamp() ? null : S.fit);
   const cm = c.material;
-  const fx = cm ? cm.burn_x ?? cm.burn : prof.bx;
-  const fy = cm ? cm.burn_y ?? cm.burn : prof.by;
-  S.compOverride = !isStamp() && !useProfile && cm && (Math.abs(fx - prof.bx) > 1e-6 || Math.abs(fy - prof.by) > 1e-6)
+  const own = !!cm && (!isStamp() || cm.burn_x != null);
+  const fx = own ? cm.burn_x ?? cm.burn : prof.bx;
+  const fy = own ? cm.burn_y ?? cm.burn : prof.by;
+  S.compOverride = own && !useProfile && (Math.abs(fx - prof.bx) > 1e-6 || Math.abs(fy - prof.by) > 1e-6)
     ? { burn: cm.burn, bx: fx, by: fy } : null;
-  // a stamp case takes kerf / 2 and no fit: only its kerf counts
-  const pk = mats.get(S.materialKey);
-  S.kerfOverride = isStamp() && !useProfile && cm?.kerf_x != null && cm.kerf_y != null &&
-    (Math.abs(cm.kerf_x - (pk.kerfX ?? NaN)) > 1e-6 || Math.abs(cm.kerf_y - (pk.kerfY ?? NaN)) > 1e-6)
-    ? { x: cm.kerf_x, y: cm.kerf_y } : null;
   S.thicknessOverride = !useProfile && cm && Math.abs(cm.thickness - mats.get(S.materialKey).thickness) > 1e-6
     ? cm.thickness : null;
   S.sheet = c.sheet ?? A3;
@@ -983,12 +954,12 @@ async function thumbnailBuild(name: string): Promise<Build | null> {
   const groups = await schema(name);
   let params = name === FIRST_BOX.generator ? { ...defaults(groups), ...FIRST_BOX.params } : defaults(groups);
   if (isStamp(name)) {
-    const packed = await py.call("stampcase_op", { generator: name, params: sc.demoCase(), material: material(), op: "repack" });
+    const packed = await py.call("stampcase_op", { generator: name, params: sc.demoCase(), material: material(name), op: "repack" });
     if (!packed.ok) return null;
     params = packed.params;
   }
   const r = await py.call<Build>("build", {
-    generator: name, params, material: material(), sheet: S.sheet, layout: null, options: defaultOptions(),
+    generator: name, params, material: material(name), sheet: S.sheet, layout: null, options: defaultOptions(),
   });
   return r.ok ? r : null;
 }

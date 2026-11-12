@@ -87,6 +87,16 @@ class Port(unittest.TestCase):
         self.assertAlmostEqual(C.BURN_X, 0.165)
         self.assertAlmostEqual(C.BURN_Y, 0.13)
 
+    def test_the_page_sends_burns_per_axis(self):
+        """The page sends a stamp case's burns like every type's (kerf / 2 per axis, no fit): the same cut as its kerf."""
+        try:
+            C.use_material({"key": "poplar3.6", "thickness": 3.7, "burn": 0.14745, "burn_x": 0.3315 / 2, "burn_y": 0.2634 / 2})
+            self.assertEqual((C.BURN_X, C.BURN_Y, C.KERF_X, C.KERF_Y), (0.3315 / 2, 0.2634 / 2, 0.3315, 0.2634))
+            C.use_material({"key": "poplar3.6", "thickness": 3.7, "burn": 0.2})     # no per-axis burns: the defaults
+            self.assertEqual((C.KERF_X, C.KERF_Y), (0.33, 0.26))
+        finally:
+            C.use_material(MAT)
+
     def test_mark_has_no_leading_zero(self):
         self.assertEqual(L.mark_text(datetime.date(2026, 8, 1)), "SG826")
         self.assertEqual(L.mark_text(datetime.date(2026, 10, 1)), "SG1026")

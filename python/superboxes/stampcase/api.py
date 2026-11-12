@@ -1,7 +1,8 @@
 """JSON in, JSON out for the stamp case; superboxes.api routes generator "StampCase" here.
 
-A request is superboxes' (api.py) with params = the case (model.Case.to_dict) and material carrying the profile's
-kerf: {"key", "thickness", "kerf_x", "kerf_y"}. A stamp case takes kerf / 2 per axis and no fit.
+A request is superboxes' (api.py) with params = the case (model.Case.to_dict) and material as every type gets it,
+here always per axis: {"key", "thickness", "burn_x", "burn_y"}. A stamp case takes kerf / 2 per axis and no fit
+(config.use_material).
 
 build(req)  -> what every type returns (parts = the boards, placements on sheets, assembly for the 3D) plus
                "stampcase": the design-coordinate geometry the board editor draws and hit-tests, and the problems.
