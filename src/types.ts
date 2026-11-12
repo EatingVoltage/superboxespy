@@ -18,7 +18,8 @@ export interface PartJ {
   children?: ShapePoly[][];
   area: number;
   walls: Wall[];
-  deco: { layer: number; lines: Pt[][]; polys?: Pt[][][]; side?: "in" }[];   // polys: FILL's areas, [outer, holes...]
+  // lines, or polys: FILL's areas [outer, holes...] (their outlines are those rings); item: the face item it is
+  deco: { layer: number; lines?: Pt[][]; polys?: Pt[][][]; side?: "in"; item?: string }[];
 }
 
 export interface Placement { part: number; sheet: number; x: number; y: number; rot: number }
@@ -83,19 +84,22 @@ export interface FaceItem {
   dy: number;
 }
 
-/** A face as Python drew it: its size, outline and free area (rings, view coordinates) and each item's place. */
+/** A face as Python drew it: its size, outline and free area (rings, view coordinates) and each item's place. An
+ *  engraved item's lines are its part's deco (item: its id), seen through rot and off: view = rot · part + off. */
 export interface FaceInfo {
   part: number;
   w: number;
   h: number;
+  rot: number[][];
+  off: number[];
   outline: number[][][];
   free: number[][][];
   covered: number[][][];       // what other parts cover on the closed box (a lid's rim over a wall)
   fixed: number[][][];         // what else is engraved there (the maker's mark), lines
   floor: number | null;        // a wall's: the box's inside floor, view y
   board: number | null;        // a wall's: the board's top, view y, once its height is set
-  items: { id: string; bounds: number[] | null; bad: boolean; lines: number[][][]; fill?: number[][][]; error?: string;
-           hole?: boolean }[];   // fill: a small logo's filled areas (FILL), rings
+  items: { id: string; bounds: number[] | null; bad: boolean; lines?: number[][][]; error?: string;
+           hole?: boolean }[];   // lines: a hole's (a hole is cut, not in the deco)
 }
 
 // ------------------------------------------------------------------ the stamp case (python/superboxes/stampcase)

@@ -361,12 +361,14 @@ def decorate(parts, asm, faces_req, t, boards=None):
     """The face editor's items as decorations: ({part index: [(layer, lines, or FILL's polygons)]} in part
     coordinates, for the sheets,
     the 3D and LightBurn; {role: face info} for the editor: the face's size, outline, free area and what covers it,
-    and per item its bounds, whether it's clear of the edges, and its lines in view coordinates; {role: Face};
-    {part index: [(dims, centre)]} the holes, part coordinates, for with_holes; {part index: [(layer, lines)]} what
-    the inside faces engrave on the parts' other side, part coordinates). boards: {role: the board's top above
-    the inside floor, mm} for the edge connectors' openings on that wall."""
+    the part-to-view transform (rot, off), and per item its bounds and whether it's clear of the edges - a hole its
+    lines too, view coordinates; an engraved item's lines are its decorations, drawn by the page through rot and off
+    (sent once); {role: Face}; {part index: [(dims, centre)]} the holes, part coordinates, for with_holes;
+    {part index: [(layer, lines)]} what the inside faces engrave on the parts' other side, part coordinates;
+    {id(geometry): item id} which decorations are which item's). boards: {role: the board's top above the inside
+    floor, mm} for the edge connectors' openings on that wall."""
     faces = find(parts, asm, t)
-    deco, info, holes, deco_in = {}, {}, {}, {}
+    deco, info, holes, deco_in, owners = {}, {}, {}, {}, {}
     cut_parts = {}                                     # part index: its holes, part coordinates (inside faces avoid them)
     for role, face in faces.items():
         items_out = []
@@ -429,19 +431,21 @@ def decorate(parts, asm, faces_req, t, boards=None):
             bad = not face.free.contains(box(*bounds)) or (holes_view is not None and (
                 holes_view.intersects(engraved) or holes_view.intersects(fill)))
             out = (deco_in if face.inside else deco).setdefault(face.part, [])
-            if not engraved.is_empty:
-                out.append((M.LINE, face.to_part(engraved)))
-            if not fill.is_empty:                      # a small logo's filled shapes (FILL outlines and fills them)
-                out.append((M.FILL, face.to_part(fill)))
-            items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad,
-                              "lines": _round(engraved), "fill": _rings(fill)})
+            # its lines, and a small logo's filled shapes (FILL outlines and fills them)
+            for layer, g in ((M.LINE, engraved), (M.FILL, fill)):
+                if not g.is_empty:
+                    g = face.to_part(g)
+                    out.append((layer, g))
+                    owners[id(g)] = item.get("id")
+            items_out.append({"id": item.get("id"), "bounds": [round(v, 2) for v in bounds], "bad": bad})
         info[role] = {"part": face.part, "w": round(face.w, 2), "h": round(face.h, 2),
+                      "rot": face.rot.round(9).tolist(), "off": [float(v) for v in face.off],
                       "outline": _rings(face.outline), "free": _rings(face.free), "covered": _rings(face.covered),
                       "items": items_out, "fixed": [],
                       "floor": None if face.floor is None else round(face.floor, 2),
                       "board": None if face.floor is None or not isinstance(board, (int, float))
                       else round(face.floor + board, 2)}
-    return deco, info, faces, holes, deco_in
+    return deco, info, faces, holes, deco_in, owners
 
 
 def _notch_ok(disc, r, face, t):

@@ -277,12 +277,20 @@ export class FaceEditor implements PageEditor {
     if (f.fixed.length) g.append(svgEl("path", { d: ringsD(f.fixed, false), class: "board-line face-fixed" }));
     if (f.board != null) g.append(svgEl("line", { x1: 0, y1: f.board, x2: f.w, y2: f.board, class: "face-board" }));
     const items = new Map<string, { g: Element; art: Element }>();
+    // an engraved item is drawn from its decorations on the part (Python sends them once), seen as on this face
+    const [[a, b], [c, d]] = f.rot, [ox, oy] = f.off;
+    const view = (r: number[][]) => r.map(([x, y]) => [a * x + b * y + ox, c * x + d * y + oy]);
+    const inside = this.side === "in";
+    const deco = this.host.build()?.parts[f.part]?.deco ?? [];
     for (const it of f.items) {
       // per item: its art (moved and scaled as a whole), then its hit box and handles (paint)
       const ig = svgEl("g"), art = svgEl("g");
       if (it.bounds) {
-        if (it.fill?.length) art.append(svgEl("path", { d: ringsD(it.fill), class: "face-fill", "fill-rule": "evenodd" }));
-        art.append(svgEl("path", { d: ringsD(it.lines, false), class: it.hole ? "board-cut" : "board-line" }));
+        const own = it.hole ? [] : deco.filter((e) => e.item === it.id && (e.side === "in") === inside);
+        const fill = own.flatMap((e) => e.polys?.flat() ?? []).map(view);
+        const lines = it.hole ? it.lines ?? [] : own.flatMap((e) => (e.polys ? [] : e.lines ?? [])).map(view);
+        if (fill.length) art.append(svgEl("path", { d: ringsD(fill), class: "face-fill", "fill-rule": "evenodd" }));
+        art.append(svgEl("path", { d: ringsD(lines, false), class: it.hole ? "board-cut" : "board-line" }));
       }
       ig.append(art);
       g.append(ig);

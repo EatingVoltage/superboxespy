@@ -80,13 +80,13 @@ def build(req):
     opts = req.get("options") or {}
     asm = assembly.assemble(req["generator"], parts, info["thickness"], placements, float(sheet["w"]),
                             info.get("attrs"))
-    parts, deco, deco_in, face_info, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
+    parts, deco, deco_in, face_info, owners, w2 = _decorations(req, parts, asm, info, bool(req.get("draft")))
     warnings += w2
     out_parts = []
     for p in parts:
         j = p.to_json()
-        j["deco"] = [_deco_json(layer, g) for layer, g in deco.get(p.index, [])] + [
-            dict(_deco_json(layer, g), side="in") for layer, g in deco_in.get(p.index, [])]
+        j["deco"] = [_deco_json(layer, g, owners) for layer, g in deco.get(p.index, [])] + [
+            dict(_deco_json(layer, g, owners), side="in") for layer, g in deco_in.get(p.index, [])]
         out_parts.append(j)
     return {
         "ok": True, "title": _title(req), "parts": out_parts, "placements": placements, "too_big": too_big,
@@ -95,18 +95,23 @@ def build(req):
     }
 
 
-def _deco_json(layer, g):
-    """A decoration for the page: its lines; polygons (a logo's fill) as their rings, and as "polys" [[outer ring,
-    hole, ...], ...] for the 3D to fill."""
+def _deco_json(layer, g, owners=None):
+    """A decoration for the page: its lines, or polygons (a logo's fill) as "polys" [[outer ring, hole, ...], ...]
+    (their outlines are those rings); "item": the face item it is, when it's one (the face editor draws it)."""
     polys = lbrn._polys(g)
     if not polys:
-        return {"layer": layer, "lines": capture.coords_json(lbrn._lines(g), 3)}
-    rings = capture.coords_json(X.rings(g), 3)          # each polygon's outer ring, then its holes
-    grouped, k = [], 0
-    for q in polys:
-        grouped.append(rings[k:k + 1 + len(q.interiors)])
-        k += 1 + len(q.interiors)
-    return {"layer": layer, "lines": rings, "polys": grouped}
+        out = {"layer": layer, "lines": capture.coords_json(lbrn._lines(g), 3)}
+    else:
+        rings = capture.coords_json(X.rings(g), 3)      # each polygon's outer ring, then its holes
+        grouped, k = [], 0
+        for q in polys:
+            grouped.append(rings[k:k + 1 + len(q.interiors)])
+            k += 1 + len(q.interiors)
+        out = {"layer": layer, "polys": grouped}
+    item = (owners or {}).get(id(g))
+    if item is not None:
+        out["item"] = item
+    return out
 
 
 def _mark_part(face_info):
@@ -116,19 +121,20 @@ def _mark_part(face_info):
 
 
 def _decorations(req, parts, asm, info, draft=False):
-    """(parts, deco, inside deco, face info, warnings): the parts with the face editor's holes cut (copies), what's
-    engraved on the parts' other side (the inside faces) and what's engraved on
+    """(parts, deco, inside deco, face info, owners, warnings): the parts with the face editor's holes cut (copies),
+    what's engraved on the parts' other side (the inside faces) and what's engraved on
     each - labels, the maker's mark (clear of the face editor's items and holes on its part) and the face editor's
-    items (req["faces"]) - and the faces for the editor, each with the mark's lines if it's there."""
-    face_deco, face_info, found, holes, deco_in = F.decorate(parts, asm, req.get("faces"), info["thickness"],
-                                                             req.get("boards"))
+    items (req["faces"]) - and the faces for the editor, each with the mark's lines if it's there; owners: which
+    decorations are which face item's (faces.decorate)."""
+    face_deco, face_info, found, holes, deco_in, owners = F.decorate(parts, asm, req.get("faces"), info["thickness"],
+                                                                     req.get("boards"))
     parts = F.with_holes(parts, holes, bool(info.get("comp")), float(info.get("burn") or 0.0))
     deco, warnings = X.decorations(parts, req.get("options") or {}, info["thickness"], req["generator"], draft,
                                    avoid=F.footprints(face_deco), default_part=_mark_part(face_info))
     F.show_fixed(face_info, found, deco)
     for i, items in face_deco.items():
         deco.setdefault(i, []).extend(items)
-    return parts, deco, deco_in, face_info, warnings
+    return parts, deco, deco_in, face_info, owners, warnings
 
 
 def export(req):
@@ -143,7 +149,7 @@ def export(req):
         return {"ok": False, "error": refused}
     opts = req.get("options") or {}
     asm = assembly.assemble(req["generator"], parts, info["thickness"], layout, float(sheet["w"]), info.get("attrs"))
-    parts, deco, deco_in, face_info, _w = _decorations(req, parts, asm, info)
+    parts, deco, deco_in, face_info, _owners, _w = _decorations(req, parts, asm, info)
     bad = F.problems(face_info)
     if bad:
         return {"ok": False, "error": "Move these first:\n" + "\n".join(bad)}

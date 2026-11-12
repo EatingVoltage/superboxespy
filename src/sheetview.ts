@@ -292,7 +292,7 @@ export class SheetView {
         if (p.paths["1"]) pg.append(svgEl("path", { d: pathD(p.paths["1"]), class: "line" }));
         for (const d of p.deco) {
           // the inside faces' engraving is on the underside as cut: faint; a logo's fill (FILL) filled
-          pg.append(svgEl("path", { d: ringsD(d.lines, !!d.polys, 0, 0, null), "fill-rule": "evenodd",
+          pg.append(svgEl("path", { d: ringsD(d.lines ?? d.polys!.flat(), !!d.polys, 0, 0, null), "fill-rule": "evenodd",
             class: d.side === "in" ? "underside" : d.polys ? "fill" : d.layer === 1 ? "line" : "ref" }));
         }
         pg.append(svgEl("path", { d: pathD(cut), class: "cut" }));

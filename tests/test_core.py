@@ -429,12 +429,15 @@ class Faces(unittest.TestCase):
         self.assertAlmostEqual(y1 - y0, 18, places=3)
         self.assertLess(y0, 0)                                    # Y up: the SVG's top is the highest
         item = {"id": "a", "kind": "svg", "svg": self.SVG, "size": 18, "anchor": "c"}
-        outline = api.build(self.req(items=[item]))["faces"]["top"]["items"][0]
-        bx0, by0, bx1, by1 = outline["bounds"]
+        # an item's lines: its part's decorations that are it (the page draws the face's item from them)
+        own = lambda b: [ln for d in b["parts"][b["faces"]["top"]["part"]]["deco"] if d.get("item") == "a"
+                         for ln in d.get("lines", [])]
+        b = api.build(self.req(items=[item]))
+        bx0, by0, bx1, by1 = b["faces"]["top"]["items"][0]["bounds"]
         self.assertAlmostEqual(by1 - by0, 18, places=3)
         self.assertAlmostEqual(bx1 - bx0, 36, places=3)           # its own proportions
-        hatched = api.build(self.req(items=[dict(item, style="hatch")]))["faces"]["top"]["items"][0]
-        self.assertGreater(len(hatched["lines"]), 10 * len(outline["lines"]))
+        hatched = api.build(self.req(items=[dict(item, style="hatch")]))
+        self.assertGreater(len(own(hatched)), 10 * len(own(b)))
         req = self.req(items=[{"id": "b", "kind": "svg", "svg": "<html/>", "size": 20, "anchor": "c"}])
         got = api.build(req)["faces"]["top"]["items"][0]
         self.assertEqual((got["bad"], got["error"]), (True, "not an SVG file"))
@@ -579,8 +582,8 @@ class Faces(unittest.TestCase):
         self.assertIn("turn the sheet over left to right", lb)
         # the page's engraving is the placed engraving mirrored about the sheet's middle
         parts, info = api._render(req)
-        parts, _deco, inside, _fi, _w = api._decorations(req, parts, assembly.assemble("ABox", parts, 3.6,
-                                                                                       req["layout"]), info)
+        parts, _deco, inside, _fi, _own, _w = api._decorations(req, parts, assembly.assemble("ABox", parts, 3.6,
+                                                                                             req["layout"]), info)
         pi = b["faces"]["top"]["part"]
         pl = next(q for q in req["layout"] if q["part"] == pi)
         placed = X._on_sheet(inside[pi][0][1], parts[pi], pl)
@@ -678,17 +681,33 @@ class LogoLibrary(unittest.TestCase):
         self.assertEqual(len(fills), 1)
         polys = [shapely.Polygon(p[0], p[1:]) for p in fills[0]["polys"]]
         self.assertAlmostEqual(sum(p.area for p in polys), 168, places=3)  # drawn 20 high: the file's own size
-        self.assertTrue(it["fill"])
+        self.assertEqual(fills[0]["item"], "L")                             # the face editor draws it from there
         lines20 = sum(len(d["lines"]) for d in deco if d["layer"] == M.LINE)
         _b, it, deco = self.logo(size=30)
         self.assertFalse([d for d in deco if d["layer"] == M.FILL])
-        self.assertEqual(it["fill"], [])
         hatched = sum(len(d["lines"]) for d in deco if d["layer"] == M.LINE)
         _b, _it, deco = self.logo(size=30, style="outline")
         self.assertFalse([d for d in deco if d["layer"] == M.FILL])
         outlined = sum(len(d["lines"]) for d in deco if d["layer"] == M.LINE)
         self.assertGreater(hatched, outlined)
         self.assertGreater(outlined, lines20)                               # the areas' outlines join the strokes
+
+    def test_an_items_geometry_is_sent_once(self):
+        """A face item's lines and filled areas reach the page once: as its part's decorations, tagged with the item
+        (a FILL's outlines are its polygons' rings). The face's rot and off take them onto the item's bounds."""
+        b, it, deco = self.logo(size=20)
+        self.assertEqual(sorted(it), ["bad", "bounds", "id"])
+        own = [d for d in deco if d.get("item") == "L"]
+        self.assertEqual(sorted(d["layer"] for d in own), sorted([M.LINE, M.FILL]))
+        self.assertNotIn("lines", next(d for d in own if d["layer"] == M.FILL))
+        top = b["faces"]["top"]
+        (a, bb), (c, dd) = top["rot"]
+        ox, oy = top["off"]
+        pts = [(a * x + bb * y + ox, c * x + dd * y + oy) for d in own
+               for ring in d.get("lines") or [r for p in d["polys"] for r in p] for x, y in ring]
+        got = (min(p[0] for p in pts), min(p[1] for p in pts), max(p[0] for p in pts), max(p[1] for p in pts))
+        for v, w in zip(got, it["bounds"]):
+            self.assertAlmostEqual(v, w, delta=0.01)
 
     def test_the_fill_goes_to_lightburn_on_fill(self):
         b, _it, _deco = self.logo(size=15)
