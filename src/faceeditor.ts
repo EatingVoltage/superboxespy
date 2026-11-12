@@ -128,6 +128,8 @@ export class FaceEditor implements PageEditor {
   private selected: string | null = null;
   private active = false;
   private svgRoot: SVGSVGElement;
+  // the face as drawn, once per build and face (and side): paint() places and marks the items on it
+  private scene: { f: FaceInfo; key: string; items: Map<string, { g: Element; art: Element }>; over: Element } | null = null;
   private drag: { id: string; x0: number; y0: number; dx: number; dy: number; moved: boolean } | null = null;
   // a corner handle being dragged: the opposite corner (fx, fy) stays, the item scales by k
   private resize: { id: string; fx: number; fy: number; hx: number; hy: number; b: number[]; size: number; k: number } | null = null;
@@ -259,6 +261,12 @@ export class FaceEditor implements PageEditor {
   private draw() {
     const f = this.info()[this.faceKey];
     if (!f || this.root.hidden) return;
+    if (this.scene?.f !== f || this.scene.key !== this.faceKey) this.drawScene(f);
+    this.paint(f);
+  }
+
+  /** The face as the build has it: the wood, its lines, each item's art where Python put it. */
+  private drawScene(f: FaceInfo) {
     const pad = Math.max(10, 0.08 * Math.max(f.w, f.h));
     this.svgRoot.setAttribute("viewBox", `${-pad} ${-(f.h + pad)} ${f.w + 2 * pad} ${f.h + 2 * pad}`);
     const g = svgEl("g", { transform: "scale(1 -1)" });
@@ -267,31 +275,58 @@ export class FaceEditor implements PageEditor {
     g.append(svgEl("path", { d: ringsD(f.free), class: "face-free" }));
     if (f.fixed.length) g.append(svgEl("path", { d: ringsD(f.fixed, false), class: "board-line face-fixed" }));
     if (f.board != null) g.append(svgEl("line", { x1: 0, y1: f.board, x2: f.w, y2: f.board, class: "face-board" }));
+    const items = new Map<string, { g: Element; art: Element }>();
+    for (const it of f.items) {
+      // per item: its art (moved and scaled as a whole), then its hit box and handles (paint)
+      const ig = svgEl("g"), art = svgEl("g");
+      if (it.bounds) {
+        if (it.fill?.length) art.append(svgEl("path", { d: ringsD(it.fill), class: "face-fill", "fill-rule": "evenodd" }));
+        art.append(svgEl("path", { d: ringsD(it.lines, false), class: it.hole ? "board-cut" : "board-line" }));
+      }
+      ig.append(art);
+      g.append(ig);
+      items.set(it.id, { g: ig, art });
+    }
+    const over = svgEl("g");       // the size while a corner is dragged, where a dragged item will pin
+    g.append(over);
+    this.svgRoot.replaceChildren(g);
+    this.scene = { f, key: this.faceKey, items, over };
+  }
+
+  /** The items as they stand: an item dragged moves, one sized scales about its fixed corner; hit boxes, handles,
+   *  red, and while dragging where it will pin. */
+  private paint(f: FaceInfo) {
+    const s = this.scene!;
     const items = new Map(this.items().map((i) => [i.id, i]));
     const d = this.drag;
     for (const it of f.items) {
-      if (!items.has(it.id)) continue;
+      const node = s.items.get(it.id)!;
+      const item = items.get(it.id);
+      node.g.querySelectorAll(":scope > rect").forEach((e) => e.remove());
+      if (!item || (!it.bounds && !it.error)) {          // deleted here and still in the build, or nothing to show
+        node.g.setAttribute("display", "none");
+        continue;
+      }
+      node.g.removeAttribute("display");
       if (!it.bounds) {
-        if (!it.error) continue;
-        const [ax, ay] = spot([0, 0, f.w, f.h], items.get(it.id)!.anchor);
-        g.append(svgEl("rect", { x: ax - 10, y: ay - 6, width: 20, height: 12, "data-id": it.id,
+        const [ax, ay] = spot([0, 0, f.w, f.h], item.anchor);
+        node.g.append(svgEl("rect", { x: ax - 10, y: ay - 6, width: 20, height: 12, "data-id": it.id,
           class: `hit face-item bad${this.selected === it.id ? " sel" : ""}` }));
         continue;
       }
       const [ox, oy] = d && d.id === it.id ? [d.dx, d.dy] : [0, 0];
       const r = this.resize?.id === it.id ? this.resize : null;
-      // while a corner is dragged, the item scales about the opposite corner
-      const art = r ? svgEl("g", { transform: `translate(${r.fx} ${r.fy}) scale(${r.k}) translate(${-r.fx} ${-r.fy})` }) : g;
-      if (it.fill?.length) art.append(svgEl("path", { d: ringsD(it.fill, true, ox, oy), class: "face-fill", "fill-rule": "evenodd" }));
-      art.append(svgEl("path", { d: ringsD(it.lines, false, ox, oy), class: it.hole ? "board-cut" : "board-line" }));
-      if (r) g.append(art);
+      const move = r ? `translate(${r.fx} ${r.fy}) scale(${r.k}) translate(${-r.fx} ${-r.fy})` : ox || oy ? `translate(${ox} ${oy})` : null;
+      if (move) node.art.setAttribute("transform", move);
+      else node.art.removeAttribute("transform");
       const [x0, y0, x1, y1] = r ? this.scaled(r) : shift(it.bounds, ox, oy);
       const bad = (d && d.id === it.id && d.moved) || r ? !this.clear(f, [x0, y0, x1, y1]) : it.bad;
-      g.append(svgEl("rect", { x: x0 - 1, y: y0 - 1, width: x1 - x0 + 2, height: y1 - y0 + 2, "data-id": it.id,
+      node.g.append(svgEl("rect", { x: x0 - 1, y: y0 - 1, width: x1 - x0 + 2, height: y1 - y0 + 2, "data-id": it.id,
         class: `hit face-item${this.selected === it.id ? " sel" : ""}${bad ? " bad" : ""}` }));
-      if (this.selected === it.id && !d?.moved && SIZED.has(items.get(it.id)!.kind)) this.handles(g, f, it.id, [x0, y0, x1, y1]);
+      if (this.selected === it.id && !d?.moved && SIZED.has(item.kind)) this.handles(node.g, f, it.id, [x0, y0, x1, y1]);
     }
-    if (this.resize) this.sizeLabel(g, f);
+    s.over.replaceChildren();
+    if (this.resize) this.sizeLabel(s.over, f);
     // while dragging: where it will pin
     if (d?.moved) {
       const it = f.items.find((i) => i.id === d.id);
@@ -300,15 +335,14 @@ export class FaceEditor implements PageEditor {
         const p = pin(f, b);
         const [fx, fy] = spot([0, 0, f.w, f.h], p.anchor);
         const [ix, iy] = spot(b, p.anchor);
-        g.append(svgEl("line", { x1: fx, y1: fy, x2: ix, y2: iy, class: "face-pin" }));
-        g.append(svgEl("circle", { cx: fx, cy: fy, r: 1.6, class: "face-spot" }));
+        s.over.append(svgEl("line", { x1: fx, y1: fy, x2: ix, y2: iy, class: "face-pin" }));
+        s.over.append(svgEl("circle", { cx: fx, cy: fy, r: 1.6, class: "face-spot" }));
       }
     }
-    this.svgRoot.replaceChildren(g);
   }
 
   /** The four corner handles of the selected item, a fixed size on screen. */
-  private handles(g: SVGElement, f: FaceInfo, id: string, b: number[]) {
+  private handles(g: Element, f: FaceInfo, id: string, b: number[]) {
     const s = this.mmPerPx(f) * 9;
     for (const [name, x, y] of [["bl", b[0], b[1]], ["br", b[2], b[1]], ["tl", b[0], b[3]], ["tr", b[2], b[3]]] as const) {
       g.append(svgEl("rect", { x: x - s / 2, y: y - s / 2, width: s, height: s, "data-id": id, "data-handle": name,
@@ -317,7 +351,7 @@ export class FaceEditor implements PageEditor {
   }
 
   /** The item's height while a corner is dragged, beside that corner (upright: the drawing is flipped). */
-  private sizeLabel(g: SVGElement, f: FaceInfo) {
+  private sizeLabel(g: Element, f: FaceInfo) {
     const r = this.resize!;
     const it = this.items().find((i) => i.id === r.id);
     if (!it) return;

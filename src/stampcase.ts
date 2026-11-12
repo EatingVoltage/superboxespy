@@ -9,7 +9,7 @@
 import { h } from "./params";
 import { clientToMM, insideRing, pathD, ringsD, svgEl } from "./sheetview";
 import { btn, fillBar, fillToolbar, helpButton, helpCard, seg, type PageEditor } from "./ui";
-import type { Block, BlockKey, Build, Case, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
+import type { Block, BlockKey, Build, Case, PartJ, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
 
 export const GENERATOR = "StampCase";
 
@@ -106,6 +106,13 @@ function bounds(polys: ShapePoly[] | null): [number, number, number, number] {
 }
 
 const polyD = (polys: ShapePoly[] | null, dx = 0, dy = 0) => ringsD(rings(polys), true, dx, dy, 3);
+
+/** What a drag's live check measures, worked out once a drag (and build): what moves, every pocket's rings and box. */
+interface DragGeo {
+  d: StampData;
+  refs: Set<string>;
+  holes: { id: string; rings: Ring[]; b: [number, number, number, number]; m: boolean }[];
+}
 
 // ------------------------------------------------------------------ host
 export interface StampHost {
@@ -299,8 +306,10 @@ export class BoardEditor implements PageEditor {
   private tab = "";                     // board key, or "sheets"
   private svgRoot: SVGSVGElement;
   private view: [number, number, number, number] | null = null;   // viewBox x, y, w, h (flipped: y is -ymax)
-  private drag: { hits: Hit[]; x0: number; y0: number; dx: number; dy: number; moved: boolean } | null = null;
+  private drag: { hits: Hit[]; x0: number; y0: number; dx: number; dy: number; moved: boolean; geo?: DragGeo } | null = null;
   private pan: { x: number; y: number; v: [number, number, number, number] } | null = null;
+  // the board as drawn, once per build and tab: paint() moves and colours what can be picked
+  private scene: { b: Build; tab: string; items: { ref: string; base: string; el: Element; label: Element | null }[] } | null = null;
 
   constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
               private host: StampHost) {
@@ -407,7 +416,12 @@ export class BoardEditor implements PageEditor {
 
   fit() {
     this.view = null;
-    this.draw();
+    this.setView();
+  }
+
+  /** The part of the board on screen (pan and zoom change only this). */
+  private setView() {
+    if (this.data()) this.svgRoot.setAttribute("viewBox", (this.view ?? this.fitView()).map((n) => n.toFixed(2)).join(" "));
   }
 
   private draw() {
@@ -415,54 +429,60 @@ export class BoardEditor implements PageEditor {
     const b = this.host.build();
     const board = this.board();
     if (!d || !b || !board || this.root.hidden) return;
-    const part = b.parts[board.part];
-    const v = this.view ?? this.fitView();
-    this.svgRoot.setAttribute("viewBox", v.map((n) => n.toFixed(2)).join(" "));
+    this.setView();
+    if (this.scene?.b !== b || this.scene.tab !== this.tab) this.drawScene(d, b, b.parts[board.part]);
+    this.paint(d);
+  }
+
+  /** The board - wood, engraving, cuts as LightBurn gets them, before kerf - and what can be picked, where Python
+   *  put it: pockets everywhere, magnets on the top board and lid, the blocks on their board. */
+  private drawScene(d: StampData, b: Build, part: PartJ) {
     const [ox, oy] = d.origin;
     const g = svgEl("g", { transform: "scale(1 -1)" });
-    // the board: wood, engraving, cuts - as LightBurn gets them, before kerf
-    const wood = svgEl("path", { d: polyD(part.shape, ox, oy), class: "board-wood", "fill-rule": "evenodd" });
-    g.append(wood);
+    g.append(svgEl("path", { d: polyD(part.shape, ox, oy), class: "board-wood", "fill-rule": "evenodd" }));
     const art = svgEl("g", { transform: `translate(${ox} ${oy})` });
     if (part.paths["1"]) art.append(svgEl("path", { d: pathD(part.paths["1"]), class: "board-line" }));
     if (part.paths["2"]) art.append(svgEl("path", { d: pathD(part.paths["2"]), class: "board-cut" }));
     g.append(art);
-
-    // what can be picked: pockets everywhere, magnets on the top board and lid, the blocks on their board
-    const bad = new Set(d.problems.filter((p) => p.level === "error").flatMap((p) => p.refs));
-    const dd = this.drag;
-    const moving = (t: Hit) => !!dd && dd.hits.some((x) => refOf(x) === refOf(t));
-    const off = (t: Hit) => (moving(t) && dd ? [dd.dx, dd.dy] : [0, 0]);
-    const live = dd?.moved ? this.liveBad() : new Set<string>();
-    const cls = (t: Hit, base: string) => {
-      const r = refOf(t);
-      return `${base}${this.selected.has(r) ? " sel" : ""}${(dd?.moved ? live.has(r) : bad.has(r)) ? " bad" : ""}`;
+    const items: NonNullable<BoardEditor["scene"]>["items"] = [];
+    const add = (ref: string, base: string, el: Element, label: Element | null = null) => {
+      g.append(el);
+      if (label) g.append(label);
+      items.push({ ref, base, el, label });
     };
     for (const p of d.pockets) {
-      const t: Hit = { kind: "pocket", id: p.id };
-      const [mx, my] = off(t);
-      const el = svgEl("path", { d: polyD(p.hole, mx, my), class: cls(t, "hit pocket"), "data-ref": p.id });
-      g.append(el);
-      if (this.selected.has(p.id) && p.label_box && this.tab === d.top_key) {
-        g.append(svgEl("path", { d: polyD(p.label_box, mx, my), class: "label-box" }));
-      }
+      // a selected pocket on the top board shows where its name goes
+      add(p.id, "hit pocket", svgEl("path", { d: polyD(p.hole), "data-ref": p.id }),
+        p.label_box && this.tab === d.top_key ? svgEl("path", { d: polyD(p.label_box), class: "label-box" }) : null);
     }
     if (this.tab === d.top_key || this.tab === "lid") {
-      d.magnets.forEach(([x, y], i) => {
-        const t: Hit = { kind: "magnet", i };
-        const [mx, my] = off(t);
-        g.append(svgEl("circle", { cx: x + mx, cy: y + my, r: Math.max(d.magnet_r, 1.6), class: cls(t, "hit magnet"), "data-ref": `magnet:${i}` }));
-      });
+      d.magnets.forEach(([x, y], i) => add(`magnet:${i}`, "hit magnet",
+        svgEl("circle", { cx: x, cy: y, r: Math.max(d.magnet_r, 1.6), "data-ref": `magnet:${i}` })));
     }
     const blocks: BlockKey[] = this.tab === d.top_key ? ["top_block"] : BLOCKS_ON[this.tab] ?? [];
     for (const k of blocks) {
       const bl = d.blocks[k];
-      if (!bl.region) continue;
-      const t: Hit = { kind: "block", key: k };
-      const [mx, my] = off(t);
-      g.append(svgEl("path", { d: polyD(bl.region, mx, my), class: cls(t, "hit block"), "data-ref": k }));
+      if (bl.region) add(k, "hit block", svgEl("path", { d: polyD(bl.region), "data-ref": k }));
     }
     this.svgRoot.replaceChildren(g);
+    this.scene = { b, tab: this.tab, items };
+  }
+
+  /** Where the picked things are (what's dragged moves) and how they look: selected, red. */
+  private paint(d: StampData) {
+    const dd = this.drag;
+    const moving = new Set(dd?.hits.map(refOf));
+    const shift = dd && (dd.dx || dd.dy) ? `translate(${dd.dx} ${dd.dy})` : null;
+    const bad = dd?.moved ? this.liveBad() : new Set(d.problems.filter((p) => p.level === "error").flatMap((p) => p.refs));
+    for (const s of this.scene!.items) {
+      const sel = this.selected.has(s.ref);
+      for (const el of [s.el, s.label]) {
+        if (el && moving.has(s.ref) && shift) el.setAttribute("transform", shift);
+        else el?.removeAttribute("transform");
+      }
+      s.el.setAttribute("class", `${s.base}${sel ? " sel" : ""}${bad.has(s.ref) ? " bad" : ""}`);
+      if (s.label) sel ? s.label.removeAttribute("display") : s.label.setAttribute("display", "none");
+    }
   }
 
   // ---------------------------------------------------------------- the toolbar over the board
@@ -656,8 +676,11 @@ export class BoardEditor implements PageEditor {
     const d = this.data();
     const dd = this.drag;
     if (!d || !dd) return out;
-    const moved = new Set(dd.hits.map(refOf));
-    const holes = d.pockets.map((p) => ({ id: p.id, rings: rings(p.hole), b: bounds(p.hole), m: moved.has(p.id) }));
+    if (dd.geo?.d !== d) {
+      const refs = new Set(dd.hits.map(refOf));
+      dd.geo = { d, refs, holes: d.pockets.map((p) => ({ id: p.id, rings: rings(p.hole), b: bounds(p.hole), m: refs.has(p.id) })) };
+    }
+    const { refs: moved, holes } = dd.geo;
     const web = d.web - 0.01;
     for (let i = 0; i < holes.length; i++) for (let j = i + 1; j < holes.length; j++) {
       const a = holes[i], b = holes[j];
@@ -722,7 +745,7 @@ export class BoardEditor implements PageEditor {
       const v = this.pan.v;
       const k = v[2] / r.width;
       this.view = [v[0] - (e.clientX - this.pan.x) * k, v[1] - (e.clientY - this.pan.y) * k, v[2], v[3]];
-      this.draw();
+      this.setView();
       return;
     }
     if (!this.drag) return;
@@ -764,6 +787,6 @@ export class BoardEditor implements PageEditor {
     if (!p) return;
     const [px, py] = p;
     this.view = [px - (px - v[0]) * k, py - (py - v[1]) * k, v[2] * k, v[3] * k];
-    this.draw();
+    this.setView();
   }
 }
