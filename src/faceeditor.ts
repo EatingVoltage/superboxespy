@@ -17,6 +17,7 @@ import { openFile } from "./files";
 import { h } from "./params";
 import { call } from "./py";
 import { clientToMM, insideRing, ringsD, svgEl } from "./sheetview";
+import { keep } from "./svgs";
 import { DRAG_PX, btn, fillBar, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem, type PageEditor } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
@@ -492,7 +493,7 @@ export class FaceEditor implements PageEditor {
     const mm = m ? Number(m[1]) * { mm: 1, cm: 10, in: 25.4 }[m[2] as "mm"] : 0;
     const f = this.info()[this.faceKey];
     const size = mm > 0 && f ? Math.min(mm, f.h * 0.8) : 30;
-    this.addItem({ id: newId(), kind: "svg", svg: file.text, name: file.name, size: Math.round(size * 2) / 2,
+    this.addItem({ id: newId(), kind: "svg", svg_ref: keep(file.text), name: file.name, size: Math.round(size * 2) / 2,
       style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 });
   }
 

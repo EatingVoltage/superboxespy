@@ -62,7 +62,8 @@ export interface FaceItem {
   kind: "text" | "logo" | "svg" | "hole";
   text?: string;               // lines split by \n
   logo?: string;               // a file in the logos folder (.svg or .lbrn2), linked by name
-  svg?: string;                // an imported SVG's text (it travels in the box file)
+  svg?: string;                // an imported SVG's text: in the box file and for Python
+  svg_ref?: string;            // ... in the page: that text in its store instead (src/svgs.ts)
   name?: string;               // the imported file's name
   shape?: "round" | "rect" | "notch";   // a hole: round (d), a rectangle (w, h, corner radius r), or a thumb notch
                                         // (d, its centre on the top or bottom edge), mm, the finished size

@@ -1,9 +1,13 @@
 // Talks to the Python worker. `call` queues requests; `latest` drops superseded ones (slider drags fire many).
 
+import { unsent } from "./svgs";
+import type { FaceItem } from "./types";
+
 type Pending = { resolve: (v: any) => void };
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 worker.postMessage({ base: new URL(".", document.baseURI).href });
+const known = new Set<string>();       // the imported SVGs' texts this worker holds (svgs.ts)
 const pending = new Map<number, Pending>();
 let nextId = 1;
 const statusListeners: ((text: string) => void)[] = [];
@@ -29,7 +33,9 @@ export function call<T = any>(fn: string, req: unknown = {}): Promise<T> {
   const id = nextId++;
   return new Promise((resolve) => {
     pending.set(id, { resolve });
-    worker.postMessage({ id, fn, req });
+    // an imported SVG's text goes along the first time only: the worker keeps it
+    const svgs = unsent((req as { faces?: Record<string, FaceItem[]> }).faces, known);
+    worker.postMessage({ id, fn, req, ...(svgs ? { svgs } : {}) });
   });
 }
 

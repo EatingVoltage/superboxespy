@@ -1,7 +1,10 @@
 // Web worker: hosts Pyodide + boxes.py so slider changes never freeze the page.
-// Messages in: {id, fn, req}. Out: {id, result} (result is the JSON string from superboxes.api.call), or
-// {type: "status", text} while starting up.
+// Messages in: {id, fn, req, svgs?} (svgs: imported SVGs' texts it doesn't hold yet, svgs.ts). Out: {id, result}
+// (result is the JSON string from superboxes.api.call), or {type: "status", text} while starting up.
 /// <reference lib="webworker" />
+
+import { add as addSvgs, resolve as withSvgs } from "./svgs";
+import type { FaceItem } from "./types";
 
 type PyodideAPI = {
   loadPackage(names: string[], opts?: { messageCallback?: (m: string) => void }): Promise<void>;
@@ -72,17 +75,21 @@ function writeLogos(py: PyodideAPI, logos: Awaited<ReturnType<typeof fetchLogos>
 
 const ready = start();
 
-self.onmessage = async (ev: MessageEvent<{ id: number; fn: string; req: unknown; base?: string }>) => {
+type Req = { faces?: Record<string, FaceItem[]> } | undefined;
+
+self.onmessage = async (ev: MessageEvent<{ id: number; fn: string; req: Req; base?: string; svgs?: Record<string, string> }>) => {
   if (ev.data.base) {
     gotBase(ev.data.base);
     return;
   }
-  const { id, fn, req } = ev.data;
+  const { id, fn, req, svgs } = ev.data;
+  if (svgs) addSvgs(svgs);
   try {
     const py = await ready;
     if (fn === "logo_library") writeLogos(py, await fetchLogos(new URL(await baseURL)));
     py.globals.set("_fn", fn);
-    py.globals.set("_req", JSON.stringify(req ?? {}));
+    // the imported SVGs' texts back in their items: Python reads them as a box file has them
+    py.globals.set("_req", JSON.stringify(req?.faces ? { ...req, faces: withSvgs(req.faces) } : req ?? {}));
     const result = py.runPython("api.call(_fn, _req)") as string;
     self.postMessage({ id, result });
   } catch (e) {

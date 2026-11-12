@@ -7,6 +7,7 @@ import { SheetView, problems } from "./sheetview";
 import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import * as sc from "./stampcase";
+import * as svgs from "./svgs";
 import { FaceEditor, type Faces } from "./faceeditor";
 import { btn, fillToolbar, helpButton, helpCard, menu, type MenuItem, type PageEditor } from "./ui";
 import { A3 } from "./types";
@@ -32,7 +33,8 @@ const S = {
   compOverride: null as { burn: number; bx: number; by: number } | null,  // burns of an opened file that differ from the profile
   thicknessOverride: null as number | null,
   sheet: A3 as Sheet,
-  faces: {} as Faces,            // the face editor's items per face (not for the stamp case: its boards are its faces)
+  faces: {} as Faces,            // the face editor's items per face (not for the stamp case: its boards are its faces);
+                                 // an imported SVG is a reference into svgs.ts, its text is inline only in a box file
   boards: {} as Record<string, number>,   // per wall: the board's top above the inside floor, mm
   home: null as string | null,   // the box's own file on disk (serve.py): Save and the exports go beside it
   options: defaultOptions(),
@@ -526,7 +528,7 @@ function config(): BoxConfig {
       ...(m.burn_x != null ? { burn_x: m.burn_x, burn_y: m.burn_y } : {}) },
     sheet: S.sheet,
     layout: S.manual.size ? S.placements : null,
-    options: S.options, ...(Object.keys(S.faces).length ? { faces: S.faces } : {}),
+    options: S.options, ...(Object.keys(S.faces).length ? { faces: svgs.resolve(S.faces) } : {}),   // SVGs inline
     ...(Object.keys(S.boards).length ? { boards: S.boards } : {}), notes: S.notes,
     saved: new Date().toISOString(),
   };
@@ -560,7 +562,7 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
     rest_cuts: o?.rest_cuts ?? d.rest_cuts,
   };
   S.notes = c.notes ?? "";
-  S.faces = isStamp() ? {} : structuredClone(c.faces ?? {});
+  S.faces = isStamp() ? {} : svgs.intern(c.faces ?? {});    // an imported SVG's text kept once, the items refer to it
   S.boards = isStamp() ? {} : { ...(c.boards ?? {}) };
   S.placements = c.layout ?? [];
   S.manual = new Set((c.layout ?? []).map((p) => p.part));
