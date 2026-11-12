@@ -112,6 +112,21 @@ export function helpCard(anchor: HTMLElement, title: string, keys: [string, stri
   m?.setAttribute("aria-label", title);
 }
 
+/** What the 2D half shows beside Sheets: a page per part - the stamp case's boards (BoardEditor), any other type's
+ *  faces (FaceEditor). One of them is active; the page shell talks to it alone, through this. */
+export interface PageEditor {
+  /** Show it (the type is its own) or let go of the 2D half; the one switched off goes first. */
+  setActive(on: boolean): void;
+  /** A build landed: draw it. */
+  update(): void;
+  /** A key while it may want it; true when handled. It checks its own state (shown, on a page). */
+  key(e: KeyboardEvent): boolean;
+  /** The part (index) of the page shown, or null on Sheets. */
+  readonly part: number | null;
+  /** A part double-clicked on the sheets: open its page. False when it has none. */
+  openPart(i: number): boolean;
+}
+
 /** A toolbar or bar button. */
 export function btn(label: string, title: string, run: (b: HTMLButtonElement) => void, cls = ""): HTMLButtonElement {
   const b = h("button", { type: "button", title, class: cls }, label) as HTMLButtonElement;

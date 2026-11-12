@@ -17,7 +17,7 @@ import { openFile } from "./files";
 import { h } from "./params";
 import { call } from "./py";
 import { clientToMM, insideRing, ringsD, svgEl } from "./sheetview";
-import { DRAG_PX, btn, fillBar, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem } from "./ui";
+import { DRAG_PX, btn, fillBar, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem, type PageEditor } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
 export type Faces = Record<string, FaceItem[]>;
@@ -122,7 +122,7 @@ const holeSize = (p: { shape?: string; d?: number; w?: number; h?: number; r?: n
 let nextId = 0;
 const newId = () => `i${Date.now().toString(36)}${(nextId++).toString(36)}`;
 
-export class FaceEditor {
+export class FaceEditor implements PageEditor {
   private tab = "sheets";              // a face role, or "sheets"
   private side: "out" | "in" = "out";  // the face seen from outside, or from inside the box (its other side)
   private selected: string | null = null;

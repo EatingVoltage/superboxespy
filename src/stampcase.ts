@@ -8,7 +8,7 @@
 
 import { h } from "./params";
 import { clientToMM, insideRing, pathD, ringsD, svgEl } from "./sheetview";
-import { btn, fillBar, fillToolbar, helpButton, helpCard, seg } from "./ui";
+import { btn, fillBar, fillToolbar, helpButton, helpCard, seg, type PageEditor } from "./ui";
 import type { Block, BlockKey, Build, Case, Pocket, Pt, ShapePoly, Side, StampData } from "./types";
 
 export const GENERATOR = "StampCase";
@@ -293,8 +293,9 @@ const refOf = (t: Hit) => (t.kind === "pocket" ? t.id : t.kind === "magnet" ? `m
 const BLOCKS_ON: Record<string, BlockKey[]> = { lid: ["lid_title", "lid_logo"] };
 const BLOCK_NAME: Record<BlockKey, string> = { top_block: "logo, project name and mark", lid_title: "lid title", lid_logo: "lid logo" };
 
-export class BoardEditor {
+export class BoardEditor implements PageEditor {
   selected = new Set<string>();
+  private active = false;
   private tab = "";                     // board key, or "sheets"
   private svgRoot: SVGSVGElement;
   private view: [number, number, number, number] | null = null;   // viewBox x, y, w, h (flipped: y is -ymax)
@@ -315,6 +316,7 @@ export class BoardEditor {
 
   /** Show the editor (stamp case) or hide it (any other type). */
   setActive(on: boolean) {
+    this.active = on;
     this.tabs.hidden = !on;
     this.root.hidden = this.tools.hidden = !on || this.tab === "sheets";
     this.bar.hidden = !on || this.tab === "sheets" || !this.selected.size;
@@ -520,8 +522,8 @@ export class BoardEditor {
         h("span", { class: "hint" }, `notch ${p.notch_side}, name ${p.label_pos === "notch" ? "beside the notch" : p.label_pos === "side" ? "opposite side" : "far end"}`));
     } else if (pockets.length) kids.push(h("b", {}, `${pockets.length} stamps`));
     if (pockets.length) {
-      kids.push(btn("Rotate", "R", () => this.key("r")), btn("Flip notch", "F", () => this.key("f")),
-        btn("Notch end", "E", () => this.key("e")), btn("Name", "N: beside the notch, opposite side, far end", () => this.key("n")),
+      kids.push(btn("Rotate", "R", () => this.act("r")), btn("Flip notch", "F", () => this.act("f")),
+        btn("Notch end", "E", () => this.act("e")), btn("Name", "N: beside the notch, opposite side, far end", () => this.act("n")),
         btn("Duplicate", "Ctrl+D", () => this.duplicate()), btn("Delete", "Del", () => this.remove()));
     }
     if (blocks.length === 1) {
@@ -533,7 +535,7 @@ export class BoardEditor {
         if (v > 0) Object.assign(n[k], { x: geo.x, y: geo.y, rot: geo.rot, size: v, placed: true } satisfies Block);
       });
       kids.push(h("b", {}, BLOCK_NAME[k]), h("span", {}, "size"), size, h("span", { class: "unit" }, "mm"),
-        btn("Rotate", "R", () => this.key("r")),
+        btn("Rotate", "R", () => this.act("r")),
         btn(geo.placed ? "Auto place" : "placed automatically", "Let the app place it again", () => this.edit((n) => (n[k].placed = false))));
     }
     if (mags.length) kids.push(h("b", {}, `${mags.length} magnet${mags.length > 1 ? "s" : ""}`), btn("Delete", "Del", () => this.remove()));
@@ -549,8 +551,13 @@ export class BoardEditor {
     this.host.commit(n, select);
   }
 
-  /** Keys while the editor is shown; true when handled. */
-  key(k: string, e?: KeyboardEvent): boolean {
+  /** Keys while a board is shown; true when handled. */
+  key(e: KeyboardEvent): boolean {
+    return this.active && this.act(e.key.toLowerCase(), e);
+  }
+
+  /** A key's action (lower case), from the keyboard or the bar's buttons; true when handled. */
+  private act(k: string, e?: KeyboardEvent): boolean {
     const d = this.data();
     if (!d || this.tab === "sheets") return false;
     const ctrl = !!e && (e.ctrlKey || e.metaKey);

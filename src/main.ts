@@ -8,7 +8,7 @@ import { renderCalibration } from "./calibration";
 import { createGallery } from "./gallery";
 import * as sc from "./stampcase";
 import { FaceEditor, type Faces } from "./faceeditor";
-import { btn, fillToolbar, helpButton, helpCard, menu, type MenuItem } from "./ui";
+import { btn, fillToolbar, helpButton, helpCard, menu, type MenuItem, type PageEditor } from "./ui";
 import { A3 } from "./types";
 import type { BoxConfig, Build, Case, ExportResult, Fit, Group, Options, Placement, Sheet } from "./types";
 
@@ -345,11 +345,8 @@ async function rebuild(final = true) {
     return k && k.x === p.x && k.y === p.y && k.rot === p.rot && k.sheet === p.sheet;
   }).map((p) => p.part));
   sheetView.show(b, S.sheet, S.placements, S.options.rest_cuts);
-  if (!isStamp()) faceEditor.update();
-  if (isStamp() && b.stampcase) {
-    editor.update();
-    sc.renderCheck($("params"), stampHost, editor);
-  }
+  pages().update();
+  if (isStamp() && b.stampcase) sc.renderCheck($("params"), stampHost, editor);
   updateMessages();
   renderOutputHint();
   view3dStale = true;
@@ -419,7 +416,7 @@ function restore(snap: string) {
   S.dirty = true;
   renderParamPanel();
   renderOutput();
-  if (!isStamp()) faceEditor.update();     // the tabs' counts at once; the faces' drawing follows the build
+  pages().update();                        // the tabs' counts at once; the pages' drawing follows the build
   rebuild(true);
 }
 
@@ -510,8 +507,9 @@ const sheetView = new SheetView($("sheets"), {
   fill: () => toggleFill("sheets"),
 });
 
-/** The editor of the parts' pages: the stamp case's boards, or any other type's faces. */
-const pages = () => (isStamp() ? editor : faceEditor);
+/** The editor of the parts' pages: the stamp case's boards, or any other type's faces; and the one not in use. */
+const pages = (): PageEditor => (isStamp() ? editor : faceEditor);
+const otherPages = (): PageEditor => (isStamp() ? faceEditor : editor);
 
 // the face or board shown is a part too: the 3D marks it while the pointer is on its drawing
 for (const id of ["face", "board"]) {
@@ -598,8 +596,8 @@ async function load(c: BoxConfig, useProfile = false, home: string | null = null
   S.fileVersion = isStamp() ? null : c.boxes_version ?? null;   // boxes.py doesn't make stamp cases
   S.dirty = false;
   editor.selected.clear();
-  faceEditor.setActive(!isStamp());     // the one switched off lets go of the 2D half; the one on decides what shows
-  editor.setActive(isStamp());
+  otherPages().setActive(false);        // the one switched off lets go of the 2D half; the one on decides what shows
+  pages().setActive(true);
   resetHistory();
   setGenLabel();
   ($("name") as HTMLInputElement).value = S.name;
@@ -1132,12 +1130,7 @@ function wire() {
       (k === "y" || e.shiftKey ? redo : undo)();
       return;
     }
-    if (isStamp() && !$("board").hidden && !(e.target as HTMLElement).closest(".sheets, .gallery, .menu")) {
-      if (editor.key(k, e)) e.preventDefault();
-    }
-    if (faceEditor.face && !(e.target as HTMLElement).closest(".sheets, .gallery, .menu")) {
-      if (faceEditor.key(e)) e.preventDefault();
-    }
+    if (!(e.target as HTMLElement).closest(".sheets, .gallery, .menu") && pages().key(e)) e.preventDefault();
   });
   wireSplit();
   window.addEventListener("beforeunload", (e) => {
