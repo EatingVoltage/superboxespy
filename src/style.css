@@ -69,7 +69,7 @@ button.primary { background: var(--accent); color: var(--accent-ink); border-col
 button.primary:hover { filter: brightness(1.08); }
 button.primary-soft { border-color: #6b5320; }
 button:disabled { opacity: 0.45; cursor: default; }
-select, input[type=text], input[type=number], textarea {
+select, input[type=text], input[type=number], input[type=search], textarea {
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 6px;
@@ -361,7 +361,13 @@ button.toggle[aria-pressed=true] { border-color: var(--accent); color: var(--acc
 .face-lib-head { display: flex; align-items: baseline; gap: 10px; }
 .face-lib-head .hint { flex: 1; min-width: 0; }
 .face-lib-close { padding: 0 8px; font-size: 18px; line-height: 1.2; }
-.face-lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; overflow-y: auto; min-height: 0; }
+.face-lib-search { width: 100%; font: inherit; color: inherit; }
+.face-lib-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+.face-lib-sec { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.face-lib-note { margin: 0; font-size: 12px; }
+.face-lib-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(124px, 1fr)); gap: 8px; flex: none; }
+.face-lib-grid.sym { grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; }
+.face-lib-grid.sym .lib-art { height: 40px; }
 .face-lib-tile { display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px 8px 6px; background: var(--part);
   color: #3b3226; border: 1px solid transparent; border-radius: 6px; cursor: grab; touch-action: none; user-select: none; }
 .face-lib-tile:hover, .face-lib-tile:focus-visible { border-color: var(--accent); }
@@ -371,6 +377,7 @@ button.toggle[aria-pressed=true] { border-color: var(--accent); color: var(--acc
 .face-lib-foot { margin: 0; font-size: 12px; }
 .lib-art .lib-line { fill: none; stroke: var(--engrave); stroke-width: 1.2px; vector-effect: non-scaling-stroke; }
 .lib-art .lib-fill { fill: #2b2117; stroke: none; }
+.lib-art .lib-stroke { fill: none; stroke: #2b2117; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .face-lib-ghost { position: fixed; z-index: 50; transform: translate(-50%, -50%); pointer-events: none; opacity: .85;
   outline: 1px dashed var(--accent); outline-offset: 2px; }
 .face-lib-ghost.off { opacity: .4; outline-color: var(--muted); }

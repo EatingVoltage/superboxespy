@@ -9,10 +9,12 @@ The editor works in the face's view: seen from outside, x to the right, y up, wh
 its back for the top and its front for the bottom (tip the box toward you to read it); (0, 0) is the lower-left corner
 of the part's outline. Items are mm in that view:
 
-    {"id", "kind": "text" | "logo" | "svg" | "hole", "text", "logo" (a file in the logos folder: .svg strokes, or a
-     LightBurn .lbrn2, lbrnart.py), "svg" (an imported SVG's text, svgart.py), "name" (its file name), "size" (cap
-     height, or a logo's or SVG's height, mm), "bold", "style": "outline" | "hatch" (a .lbrn2 logo: "outline" for
-     outlines only, else as drawn), "rot": 0 | 90 | 180 | 270,
+    {"id", "kind": "text" | "logo" | "svg" | "symbol" | "hole", "text", "logo" (a file in the logos folder: .svg
+     strokes, or a LightBurn .lbrn2, lbrnart.py), "svg" (an imported SVG's text, svgart.py), "name" (its file name),
+     "symbol" (a library symbol's id, "lucide:midi-port", with its drawing as placed: "path" stroked, "path_fill"
+     filled, SVG path data on a 24-unit grid), "size" (cap height, a logo's or SVG's height, a symbol's grid, mm),
+     "bold", "style": "outline" | "hatch" (a .lbrn2 logo: "outline" for outlines only, else as drawn; a symbol:
+     "line" | "solid"), "rot": 0 | 90 | 180 | 270,
      a hole: "shape": "round" (with "d") | "rect" (with "w", "h", "r") | "notch" (a thumb notch: "d", its centre on
      the face's top or bottom edge, by the anchor's row), "part" (the library part it's for),
      "anchor": "tl" | "t" | "tr" | "l" | "c" | "r" | "bl" | "b" | "br", "dx", "dy"}
@@ -32,6 +34,12 @@ that's gone turns the item red. A .lbrn2 logo engraves as drawn: its line layers
 shapes on FILL while the logo is FILL_MAX high or less, above that their outlines and a drawn hatch on LINE
 (eVlaser: line first, fill for small accents).
 
+A symbol comes from the symbol library (.grill/symbol-library.md: Lucide and Tabler, line icons on a 24-unit grid
+with a 2-unit stroke) and keeps its drawing in the box, so it engraves what was placed whatever a later version of the
+set does. "line" engraves each stroke's centre line on LINE (a dot, a stroke of no length, as a circle the stroke's
+width across); "solid" the strokes at their drawn width as filled shapes, by the logo's rule: FILL while the symbol is
+FILL_MAX high or less, hatched on LINE above.
+
 A hole is cut through the part (CUT): its size is the finished hole, the kerf taken care of like boxes.py's own holes,
 and it keeps HOLE_WEB of wood to the next hole. A hole with "board" is an edge connector's opening in a wall: it sits
 at the board's height on that wall (the request's "boards": {role: mm of the board's top above the inside floor}),
@@ -43,6 +51,8 @@ import math
 import os
 
 from dataclasses import dataclass
+from functools import lru_cache
+from xml.sax.saxutils import quoteattr
 
 import numpy as np
 from shapely import affinity
@@ -69,6 +79,8 @@ EDGE_AIR = 0.5                   # an edge connector's opening starts this far b
 ARC = 0.5522847498               # cubic Bezier handle for a quarter circle
 FILL_MAX = 20.0                  # mm: a logo this high or less engraves its filled shapes on FILL, a taller one hatched
 LOGO_KINDS = (".svg", ".lbrn2")
+GRID, STROKE = 24.0, 2.0         # a symbol's drawing: a 24-unit grid, strokes 2 units wide, round caps and joins
+DOT = 0.05                       # grid units: a stroke this short is a dot (Lucide's "h.01")
 
 
 @dataclass
@@ -199,7 +211,9 @@ def _block(item):
         return _logo(item, size, rot)
     if item.get("kind") == "svg":
         return MultiPolygon(), _svg(item, size, rot), MultiPolygon()
-    rows = [r for r in str(item.get("text") or "").split("\n")]
+    if item.get("kind") == "symbol":
+        return _symbol(item, size, rot)
+    rows =[r for r in str(item.get("text") or "").split("\n")]
     if not any(r.strip() for r in rows):
         return MultiPolygon(), MultiLineString(), MultiPolygon()
     font = SS.font(SC.FONT_BOLD if item.get("bold") else SC.FONT_REGULAR)
@@ -234,13 +248,59 @@ def _logo(item, size, rot):
     lines, fill = affinity.affine_transform(art.lines, fit), affinity.affine_transform(art.fill, fit)
     if rot:
         lines, fill = affinity.rotate(lines, rot, origin=(0, 0)), affinity.rotate(fill, rot, origin=(0, 0))
+    return _filled(lines, fill, size, outline=item.get("style") == "outline")
+
+
+def _filled(lines, fill, size, outline=False):
+    """(polygons, lines, fill) of art with filled shapes `size` high, by the logo rule (eVlaser: line first, fill for
+    small accents): the filled shapes on FILL while it's FILL_MAX high or less, above that their outlines and a drawn
+    hatch on LINE; "outline": their outlines alone."""
     if fill.is_empty:
         return MultiPolygon(), lines, MultiPolygon()
-    if item.get("style") == "outline":
+    if outline:
         return fill, lines, MultiPolygon()
     if size <= FILL_MAX + 1e-9:
         return MultiPolygon(), lines, fill
     return fill, unary_union([lines, textures.line_hatch(fill, HATCH, angles=(45, -45))]), MultiPolygon()
+
+
+def _symbol(item, size, rot):
+    """A library symbol, its 24-unit grid `size` tall and centred on the origin, from the drawing the box keeps:
+    "line" its strokes' centre lines (a dot as a circle the stroke's width across), "solid" the strokes at their drawn
+    width and what the drawing fills, as filled shapes (_filled). Raises ValueError for a drawing that's missing or
+    can't be read."""
+    name = item.get("symbol") or "the symbol"
+    try:
+        lines, dots, area = _symbol_art(str(item.get("path") or ""), str(item.get("path_fill") or ""))
+    except Exception:                                   # path data that isn't: whatever the parser trips over
+        raise ValueError("%s: its drawing can't be read" % name)
+    if lines.is_empty and dots.is_empty and area.is_empty:
+        raise ValueError("%s has no drawing" % name)
+    k = size / GRID
+    scale = lambda g: affinity.scale(g, k, k, origin=(0, 0)) if not rot else \
+        affinity.rotate(affinity.scale(g, k, k, origin=(0, 0)), rot, origin=(0, 0))
+    if item.get("style") == "solid":
+        solid = unary_union([lines.buffer(STROKE / 2), dots.buffer(STROKE / 2), area])
+        return _filled(MultiLineString(), scale(solid), size)
+    circles = [Point(p.x, p.y).buffer(STROKE / 2).exterior for p in dots.geoms]
+    # what's filled, outlined: but not twice where a stroke already runs round it (a filled and stroked circle)
+    edges = [r for r in rings(area) if not any(r.equals(g) for g in lines.geoms)]
+    return MultiPolygon(), scale(MultiLineString(list(lines.geoms) + circles + edges)), MultiPolygon()
+
+
+@lru_cache(maxsize=256)
+def _symbol_art(path, path_fill):
+    """A symbol's drawing in grid units, centred on the grid's middle, y up: (its strokes' centre lines, its dots,
+    what it fills). Shared between the items and builds that use the same symbol."""
+    svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d=%s/></svg>'
+    strokes, _rings = svgart.parse(svg % quoteattr(path)) if path.strip() else (MultiLineString(), ())
+    _l, filled = svgart.parse(svg % quoteattr(path_fill)) if path_fill.strip() else (MultiLineString(), ())
+    lines, dots = [], []
+    for g in strokes.geoms:
+        (dots if g.length < DOT else lines).append(g)
+    centre = lambda g: affinity.translate(g, -GRID / 2, GRID / 2)       # svgart's y is the SVG's, negated
+    return (centre(MultiLineString(lines)), centre(MultiPoint([g.centroid for g in dots])),
+            centre(svgart.area(filled)))
 
 
 def _svg(item, size, rot):

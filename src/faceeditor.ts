@@ -6,11 +6,13 @@
 // anchor spots (corners, edge middles, centre) with its distance to it, so it keeps its place when the box changes
 // size. Every edit goes to the host as the box's new items, which keeps undo and asks Python again.
 //
-// Add logo opens the logo library (.grill/logo-library.md): the logos folder's .svg and LightBurn .lbrn2 files, read
-// again each time it opens. Drag one onto the face (it lands where it's dropped, at its true size), or click it. A
-// selected text, logo or SVG has corner handles: drag one to size it, proportions kept, the opposite corner fixed.
+// Library opens one library (.grill/logo-library.md, .grill/symbol-library.md): a search box, Recent (the last 16
+// placed), the logos folder's .svg and LightBurn .lbrn2 files (read again each time it opens), then the symbols
+// (Lucide, Tabler: src/symbols.ts) the typed words find. Drag one onto the face (it lands where it's dropped, at its
+// true size), or click it. A selected text, logo, SVG or symbol has corner handles: drag one to size it, proportions
+// kept, the opposite corner fixed.
 //
-// The toolbar over the face adds things (Text, Logo, SVG…, Hole ▾) and picks the side; its ? card holds the keys.
+// The toolbar over the face adds things (Text, Library, SVG…, Hole ▾) and picks the side; its ? card holds the keys.
 // The bar under the face shows only the selected item's settings (.grill/ui-toolbars-menus.md).
 
 import { openFile } from "./files";
@@ -18,6 +20,8 @@ import { h } from "./params";
 import { call } from "./py";
 import { clientToMM, insideRing, ringsD, svgEl } from "./sheetview";
 import { keep } from "./svgs";
+import { loadSymbols, matches, queryWords, recent, searchSymbols, setOf, symbolName, symbolPreview, tagsOf, used,
+         type Recent, type SymbolIndex } from "./symbols";
 import { DRAG_PX, btn, fillBar, fillToolbar, helpButton, helpCard, menuButton, seg, toggle, type MenuItem, type PageEditor } from "./ui";
 import type { Build, FaceInfo, FaceItem, LogoEntry } from "./types";
 
@@ -41,11 +45,25 @@ const ANCHOR_NAME: Record<string, string> = {
 };
 const SNAP = 3;          // mm: closer than this to the centre line snaps onto it
 const LOGO_SIZE = 20;    // mm: a new logo's height
+const SYMBOL_SIZE = 10;  // mm: a new symbol's grid (its 24 units)
 const FILL_MAX = 20;     // mm: a logo this high or less fills its filled shapes, a taller one is hatched (faces.FILL_MAX)
-const SIZED = new Set(["text", "logo", "svg"]);   // what the corner handles size (a hole keeps its typed size)
+const SIZED = new Set(["text", "logo", "svg", "symbol"]);   // what the corner handles size (a hole keeps its typed size)
+const SHOWN = 120;       // symbols listed for a search at most: type more to narrow it down
 
 let library: LogoEntry[] | null = null;           // the last listing of the logos folder
 let reading: Promise<LogoEntry[]> | null = null;
+let symbols: SymbolIndex | null | undefined;     // the symbol index: undefined until read, null when there's none
+
+/** What the library offers: a logo from the logos folder, or a symbol with its drawing. */
+type LibEntry = { kind: "logo"; e: LogoEntry } | { kind: "symbol"; id: string; d: string; f?: string };
+
+/** The item's fields for a library entry (what goes in the box). */
+const fieldsOf = (x: LibEntry): Partial<FaceItem> => x.kind === "logo"
+  ? { kind: "logo", logo: x.e.logo, symbol: undefined, path: undefined, path_fill: undefined }
+  : { kind: "symbol", symbol: x.id, path: x.d, path_fill: x.f || undefined, logo: undefined };
+
+const recentOf = (x: LibEntry): Recent => x.kind === "logo" ? { kind: "logo", logo: x.e.logo }
+  : { kind: "symbol", symbol: x.id, path: x.d, ...(x.f ? { path_fill: x.f } : {}) };
 /** The logo library, read again (the worker copies the folder anew first). */
 function readLibrary(): Promise<LogoEntry[]> {
   reading ??= call<{ ok: boolean; logos?: LogoEntry[] }>("logo_library")
@@ -134,19 +152,32 @@ export class FaceEditor implements PageEditor {
   private drag: { id: string; x0: number; y0: number; dx: number; dy: number; moved: boolean } | null = null;
   // a corner handle being dragged: the opposite corner (fx, fy) stays, the item scales by k
   private resize: { id: string; fx: number; fy: number; hx: number; hy: number; b: number[]; size: number; k: number } | null = null;
-  private lib: HTMLElement;                    // the logo library's popover
-  private libMode: "add" | "swap" = "add";     // add a logo, or put one in place of the selected logo
+  private lib: HTMLElement;                    // the library's popover
+  private libSearch: HTMLInputElement;         // ... its search box
+  private libBody: HTMLElement;                // ... and what it lists
+  private libFirst: LibEntry | null = null;    // the first entry listed: Enter places it
+  private libMode: "add" | "swap" = "add";     // add one, or put one in place of the selected logo or symbol
 
   constructor(private tabs: HTMLElement, private tools: HTMLElement, private root: HTMLElement, private bar: HTMLElement,
               private host: FaceHost) {
     this.svgRoot = svgEl("svg", { class: "board-svg face-svg", tabindex: 0 }) as SVGSVGElement;
-    this.lib = h("div", { class: "face-lib", role: "dialog", "aria-label": "Logo library", tabindex: -1, hidden: true });
+    this.lib = h("div", { class: "face-lib", role: "dialog", "aria-label": "Library", tabindex: -1, hidden: true });
     this.lib.addEventListener("keydown", (e) => {
       if (e.key === "Escape") {
         e.stopPropagation();
         this.closeLibrary();
       }
     });
+    this.libSearch = h("input", { type: "search", class: "face-lib-search", placeholder: "Search logos and symbols",
+      "aria-label": "Search logos and symbols", spellcheck: "false", autocomplete: "off" }) as HTMLInputElement;
+    this.libSearch.addEventListener("input", () => this.renderLibraryBody());
+    this.libSearch.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && this.libFirst) {
+        e.preventDefault();
+        this.pick(this.libFirst);
+      }
+    });
+    this.libBody = h("div", { class: "face-lib-body" });
     root.append(this.svgRoot, this.lib);
     this.svgRoot.addEventListener("pointerdown", (e) => this.down(e));
     this.svgRoot.addEventListener("pointermove", (e) => this.move(e));
@@ -367,7 +398,8 @@ export class FaceEditor implements PageEditor {
     const mm = r.size * r.k;
     const what = it.kind === "text" ? "cap " : "";
     const entry = it.kind === "logo" ? library?.find((l) => l.logo === it.logo) : undefined;
-    const fills = entry?.fills && it.style !== "outline" ? (mm <= FILL_MAX ? " · filled" : " · hatched") : "";
+    const filled = it.kind === "symbol" ? it.style === "solid" : !!entry?.fills && it.style !== "outline";
+    const fills = filled ? (mm <= FILL_MAX ? " · filled" : " · hatched") : "";
     const px = this.mmPerPx(f);
     const [hx, hy] = [r.fx + (r.hx - r.fx) * r.k, r.fy + (r.hy - r.fy) * r.k];
     const t = svgEl("text", { x: hx + 8 * px * Math.sign(hx - r.fx || 1), y: -(hy + 8 * px * Math.sign(hy - r.fy || 1)),
@@ -559,19 +591,26 @@ export class FaceEditor implements PageEditor {
     this.addItem({ id: newId(), kind, text: "TEXT", size: 10, bold: false, style: "outline", rot: 0, anchor: "c", dx: 0, dy: 0 });
   }
 
-  // ---------------------------------------------------------------- the logo library
-  /** Open the library over the face: to add a logo, or to put one in place of the selected logo. */
+  // ---------------------------------------------------------------- the library: logos and symbols
+  /** Open the library over the face: to add a logo or symbol, or to put one in place of the selected one. */
   openLibrary(mode: "add" | "swap") {
     this.libMode = mode;
+    this.libSearch.value = "";
     this.lib.hidden = false;
     this.renderLibrary();
-    this.lib.focus({ preventScroll: true });
+    this.libSearch.focus({ preventScroll: true });
     readLibrary().then(() => {
-      if (!this.lib.hidden) this.renderLibrary();
+      if (!this.lib.hidden) this.renderLibraryBody();
       this.renderBar();
       // a box links its logos by name: the folder was just copied again, so they're drawn from the files as they are
       if (Object.values(this.host.faces()).some((list) => list.some((i) => i.kind === "logo"))) this.host.refresh();
     });
+    if (symbols === undefined) {
+      loadSymbols().then((ix) => {
+        symbols = ix;
+        if (!this.lib.hidden) this.renderLibraryBody();
+      });
+    }
   }
 
   private closeLibrary() {
@@ -584,41 +623,96 @@ export class FaceEditor implements PageEditor {
     const swap = this.libMode === "swap";
     const close = h("button", { class: "face-lib-close", title: "Close (Esc)", "aria-label": "Close" }, "×");
     close.onclick = () => this.closeLibrary();
-    const head = h("div", { class: "face-lib-head" }, h("b", {}, swap ? "Change the logo" : "Logos"),
-      h("span", { class: "hint" }, swap ? "Click one to put it in place of the selected logo."
-        : "Drag one onto the face, or click it to put it at the top left."), close);
-    const grid = h("div", { class: "face-lib-grid" });
-    if (library === null) grid.append(h("p", { class: "hint" }, "Reading the logos folder…"));
-    else if (!library.length) grid.append(h("p", { class: "hint" }, "No logos: start the app with serve.py (start.bat), " +
-      "and put .svg or .lbrn2 files into the logos folder."));
-    for (const e of library ?? []) {
+    const head = h("div", { class: "face-lib-head" }, h("b", {}, swap ? "Change it" : "Library"),
+      h("span", { class: "hint" }, swap ? "Click one to put it in its place: the same place and height."
+        : "Drag one onto the face, or click it to put it at the top left. Enter takes the first."), close);
+    const sets = symbols ? Object.values(symbols.sets).map((s) => `${s.name} (${s.license})`).join(" and ") : "Lucide (ISC) and Tabler Icons (MIT)";
+    const foot = h("p", { class: "hint face-lib-foot" }, "Logos: the logos folder (C:\\Projects\\eating voltage Fonts\\logos), " +
+      ".svg or LightBurn .lbrn2, linked by name: change the file and the box follows. " +
+      `Symbols: ${sets}, open source, their licenses in the app's symbols folder; a box keeps the drawing it placed.`);
+    this.lib.replaceChildren(head, this.libSearch, this.libBody, foot);
+    this.renderLibraryBody();
+  }
+
+  /** What the library lists for the search box's words: Recent, the logos, then the symbols found (none for no
+   *  words). */
+  private renderLibraryBody() {
+    const q = queryWords(this.libSearch.value);
+    const out: Node[] = [];
+    const shown: LibEntry[] = [];
+    const section = (title: string, entries: LibEntry[], cls = "") => {
+      out.push(h("div", { class: "face-lib-sec" }, title));
+      const grid = h("div", { class: `face-lib-grid${cls}` });
+      for (const x of entries) grid.append(this.tile(x));
+      out.push(grid);
+      shown.push(...entries);
+    };
+    const hint = (text: string) => out.push(h("p", { class: "hint face-lib-note" }, text));
+    const found = (x: LibEntry) => !q.length || !!(x.kind === "logo" ? matches(q, queryWords(x.e.label))
+      : matches(q, queryWords(symbolName(x.id)), tagsOf(symbols ?? null, x.id)));
+    // Recent: what was placed last, logos and symbols
+    const rec = recent().map((r): LibEntry | null => {
+      if (r.kind === "symbol") return { kind: "symbol", id: r.symbol, d: r.path, f: r.path_fill };
+      const e = library?.find((l) => l.logo === r.logo && !l.error);
+      return e ? { kind: "logo", e } : null;
+    }).filter((x): x is LibEntry => !!x && found(x));
+    if (rec.length) section("Recent", rec, " sym");
+    // the logos folder
+    const logos = (library ?? []).map((e): LibEntry => ({ kind: "logo", e })).filter(found);
+    if (library === null) hint("Reading the logos folder…");
+    else if (!library.length && !q.length) hint("No logos: start the app with serve.py (start.bat), and put .svg or " +
+      ".lbrn2 files into the logos folder.");
+    if (logos.length) section("Logos", logos);
+    // the symbols
+    if (symbols === undefined) hint("Reading the symbols…");
+    else if (symbols === null) hint("No symbols: the app was built without them (npm run setup).");
+    else if (!q.length) hint(`Type to search ${symbols.symbols.length.toLocaleString("en")} symbols (Lucide, Tabler Icons): ` +
+      "usb, midi, power, screw…");
+    else {
+      const hits = searchSymbols(symbols, q);
+      if (!hits.length) hint(`No symbol matches “${this.libSearch.value.trim()}”.`);
+      else {
+        section(hits.length > SHOWN ? `Symbols · the first ${SHOWN} of ${hits.length}` : `Symbols · ${hits.length}`,
+          hits.slice(0, SHOWN).map((s): LibEntry => ({ kind: "symbol", id: s.id, d: s.d, f: s.f })), " sym");
+        if (hits.length > SHOWN) hint("Type more to narrow it down.");
+      }
+    }
+    this.libFirst = shown.find((x) => x.kind === "symbol" || !x.e.error) ?? null;
+    this.libBody.replaceChildren(...out);
+    this.libBody.scrollTop = 0;
+  }
+
+  /** A library tile: drag it onto the face, or click it (Enter or Space too). */
+  private tile(x: LibEntry): HTMLElement {
+    let tile: HTMLElement;
+    if (x.kind === "logo") {
+      const e = x.e;
       const size = e.w && e.h ? `${+e.w.toFixed(1)} × ${+e.h.toFixed(1)} mm as drawn` : "";
-      const tile = h("button", { class: "face-lib-tile", disabled: !!e.error,
+      tile = h("button", { class: "face-lib-tile", disabled: !!e.error,
         title: e.error ? `${e.logo}: ${e.error}` : `${e.logo}\n${size}${e.fills ? "\nfilled shapes: filled up to " +
           FILL_MAX + " mm high, hatched above" : ""}` },
         e.error ? h("span", { class: "bad-text" }, "can't be read") : logoPreview(e), h("span", { class: "face-lib-name" }, e.label));
-      tile.addEventListener("pointerdown", (ev) => this.libDown(ev, e));
-      tile.onclick = (ev) => {
-        if (ev.detail === 0) this.pick(e);          // Enter or Space; a pointer's click is handled by libDown
-      };
-      grid.append(tile);
+    } else {
+      tile = h("button", { class: "face-lib-tile", title: `${symbolName(x.id)}\n${setOf(x.id, symbols ?? null)}` },
+        symbolPreview(x.d, x.f), h("span", { class: "face-lib-name" }, symbolName(x.id)));
     }
-    const foot = h("p", { class: "hint face-lib-foot" }, "The logos folder (C:\\Projects\\eating voltage Fonts\\logos): " +
-      "an .svg, or a LightBurn .lbrn2 (its first page as drawn: Scan layers filled, Cut and Line layers as outlines; " +
-      "text needs no font). One file is one logo. A box links its logo by name: change the file and the box follows.");
-    this.lib.replaceChildren(head, grid, foot);
+    tile.addEventListener("pointerdown", (ev) => this.libDown(ev, x));
+    tile.onclick = (ev) => {
+      if (ev.detail === 0) this.pick(x);            // Enter or Space; a pointer's click is handled by libDown
+    };
+    return tile;
   }
 
   /** Pointer down on a library tile: a click picks it; a drag carries it, at its true size, onto the face. */
-  private libDown(ev: PointerEvent, e: LogoEntry) {
-    if (ev.button !== 0 || e.error) return;
+  private libDown(ev: PointerEvent, x: LibEntry) {
+    if (ev.button !== 0 || (x.kind === "logo" && x.e.error)) return;
     ev.preventDefault();
     const [sx, sy] = [ev.clientX, ev.clientY];
     let ghost: HTMLElement | null = null;
     const move = (m: PointerEvent) => {
       if (!ghost) {
         if (this.libMode === "swap" || Math.hypot(m.clientX - sx, m.clientY - sy) < DRAG_PX) return;
-        ghost = this.ghost(e);
+        ghost = this.ghost(x);
         document.body.append(ghost);
         this.lib.hidden = true;                     // the whole face is the drop target
       }
@@ -631,11 +725,11 @@ export class FaceEditor implements PageEditor {
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", cancel);
       if (!ghost) {
-        if (drop) this.pick(e);
+        if (drop) this.pick(x);
         return;
       }
       ghost.remove();
-      if (drop && this.overFace(u)) this.dropAt(e, this.toFace(u));
+      if (drop && this.overFace(u)) this.dropAt(x, this.toFace(u));
       this.closeLibrary();
     };
     const up = (u: PointerEvent) => end(u, true);
@@ -645,15 +739,23 @@ export class FaceEditor implements PageEditor {
     window.addEventListener("pointercancel", cancel);
   }
 
-  /** What follows the pointer while a logo is dragged in: the logo as big as it will land on the face. */
-  private ghost(e: LogoEntry): HTMLElement {
+  /** A new item's height and its width as it lands (mm): a logo at its own proportions, a symbol's square grid. */
+  private landing(x: LibEntry): [number, number] {
+    if (x.kind === "symbol") return [SYMBOL_SIZE, SYMBOL_SIZE];
+    const e = x.e;
+    return [LOGO_SIZE, e.w && e.h ? (LOGO_SIZE * e.w) / e.h : LOGO_SIZE * 2.5];
+  }
+
+  /** What follows the pointer while one is dragged in: as big as it will land on the face. */
+  private ghost(x: LibEntry): HTMLElement {
     const f = this.info()[this.faceKey];
     const px = f ? 1 / this.mmPerPx(f) : 3;
-    const hgt = LOGO_SIZE * px, wid = e.w && e.h ? (hgt * e.w) / e.h : hgt * 2.5;
+    const [hmm, wmm] = this.landing(x);
+    const k = x.kind === "symbol" ? 26 / 24 : 1;   // a symbol's preview has room for its strokes around the grid
     const el = h("div", { class: "face-lib-ghost" });
-    el.style.width = `${wid}px`;
-    el.style.height = `${hgt}px`;
-    el.append(logoPreview(e));
+    el.style.width = `${wmm * px * k}px`;
+    el.style.height = `${hmm * px * k}px`;
+    el.append(x.kind === "logo" ? logoPreview(x.e) : symbolPreview(x.d, x.f));
     return el;
   }
 
@@ -662,21 +764,32 @@ export class FaceEditor implements PageEditor {
     return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
   }
 
-  /** A logo dropped on the face: its centre where it was dropped, pinned to the nearest spot. */
-  private dropAt(e: LogoEntry, [x, y]: [number, number]) {
-    const f = this.info()[this.faceKey];
-    if (!f) return;
-    const w = e.w && e.h ? (LOGO_SIZE * e.w) / e.h : LOGO_SIZE * 2.5;
-    this.addItem({ id: newId(), kind: "logo", logo: e.logo, size: LOGO_SIZE, rot: 0,
-      ...pin(f, [x - w / 2, y - LOGO_SIZE / 2, x + w / 2, y + LOGO_SIZE / 2]) });
+  /** The fields of a new item from the library (what goes in the box), at its starting size. */
+  private newFrom(x: LibEntry): Pick<FaceItem, "id" | "size" | "rot"> & Partial<FaceItem> {
+    return { id: newId(), ...fieldsOf(x), size: this.landing(x)[0], rot: 0, ...(x.kind === "symbol" ? { style: "line" } : {}) };
   }
 
-  /** A tile clicked: the selected logo becomes this one, or this one goes in at the top left. */
-  private pick(e: LogoEntry) {
+  /** One dropped on the face: its centre where it was dropped, pinned to the nearest spot. */
+  private dropAt(x: LibEntry, [px, py]: [number, number]) {
+    const f = this.info()[this.faceKey];
+    if (!f) return;
+    const [hmm, wmm] = this.landing(x);
+    used(recentOf(x));
+    this.addItem({ ...this.newFrom(x), ...pin(f, [px - wmm / 2, py - hmm / 2, px + wmm / 2, py + hmm / 2]) } as FaceItem);
+  }
+
+  /** A tile clicked: the selected logo or symbol becomes this one (its place and height kept), or this one goes in
+   *  at the top left. */
+  private pick(x: LibEntry) {
+    if (x.kind === "logo" && x.e.error) return;
     const it = this.items().find((i) => i.id === this.selected);
     this.closeLibrary();
-    if (this.libMode === "swap" && it?.kind === "logo") this.change(it.id, { logo: e.logo });
-    else this.addItem({ id: newId(), kind: "logo", logo: e.logo, size: LOGO_SIZE, rot: 0, anchor: "tl", dx: 15, dy: -15 });
+    used(recentOf(x));
+    if (this.libMode === "swap" && (it?.kind === "logo" || it?.kind === "symbol")) {
+      // a logo's style (outline only or as drawn) and a symbol's (line or solid) don't carry over to the other kind
+      const style = it.kind === x.kind ? it.style : x.kind === "symbol" ? "line" : undefined;
+      this.change(it.id, { ...fieldsOf(x), style });
+    } else this.addItem({ ...this.newFrom(x), anchor: "tl", dx: 15, dy: -15 } as FaceItem);
   }
 
   private remove() {
@@ -725,7 +838,8 @@ export class FaceEditor implements PageEditor {
     if (!this.active || this.tab === "sheets") return;
     const add: (Node | string)[] = [h("span", { class: "tb-label" }, "Add"),
       btn("Text", "Text in eV Sans, engraved", () => this.add("text")),
-      btn("Logo", "The logo library: drag a logo onto the face, or click it", () => this.openLibrary("add")),
+      btn("Library", "Your logos and the open-source symbols, with a search: drag one onto the face, or click it",
+        () => this.openLibrary("add")),
       btn("SVG…", "Line art from an SVG file, engraved: its paths and shapes (convert text to paths first). " +
         "The file is kept in the box.", () => this.importSvg())];
     if (this.side === "out") {
@@ -828,12 +942,26 @@ export class FaceEditor implements PageEditor {
       kids.push(h("b", { title: "An imported SVG, kept in the box" }, it.name ?? "SVG"), h("span", {}, "height"),
         num(it.size, "Height, mm", (v) => this.change(it.id, { size: v })), h("span", { class: "unit" }, "mm"),
         styleSeg());
+    } else if (it.kind === "symbol") {
+      const id = it.symbol ?? "";
+      kids.push(h("b", { title: `${id}, ${setOf(id, symbols ?? null)}: its drawing is kept in the box` },
+        symbolName(id) || "Symbol"),
+        btn("Change…", "Put another symbol or logo from the library in its place", () => this.openLibrary("swap")),
+        h("span", { title: "The symbol's grid: the drawing as designed, a little inside it" }, "size"),
+        num(it.size, "Symbol size, mm", (v) => this.change(it.id, { size: v })), h("span", { class: "unit" }, "mm"),
+        seg<"line" | "solid">("Engraving", [["line", "Line", "One pass along each line's centre (LINE): fast, thinner " +
+          "than drawn"], ["solid", "Solid", `The lines at their drawn width: filled (FILL) up to ${FILL_MAX} mm, ` +
+          "hatched on LINE above"]], it.style === "solid" ? "solid" : "line", (v) => this.change(it.id, { style: v })));
+      if (it.style === "solid") {
+        kids.push(h("span", { class: "hint" }, it.size <= FILL_MAX ? `filled (FILL, ${FILL_MAX} mm or less)`
+          : `hatched (above ${FILL_MAX} mm)`));
+      }
     } else {
       if (library === null) readLibrary().then(() => this.renderBar());     // to know whether it has filled shapes
       const entry = library?.find((l) => l.logo === it.logo);
       kids.push(h("b", { title: `${it.logo} in the logos folder, linked by name: change the file and this box follows` },
         (it.logo ?? "").replace(/\.(svg|lbrn2)$/i, "") || "Logo"),
-        btn("Change…", "Put another logo from the library in its place", () => this.openLibrary("swap")),
+        btn("Change…", "Put another logo or symbol from the library in its place", () => this.openLibrary("swap")),
         h("span", {}, "height"), num(it.size, "Logo height, mm", (v) => this.change(it.id, { size: v })),
         h("span", { class: "unit" }, "mm"));
       if (entry?.fills) {

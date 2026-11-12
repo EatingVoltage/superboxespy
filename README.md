@@ -111,7 +111,7 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
 - **Text, logos and SVG on the faces** (the face editor: `.grill/face-editor.md`). Beside **Sheets** there's a tab
   per face of the closed box (Top, Front, Back, Left, Right, Bottom), each seen from outside: a wall with the box's
   up on top, the top with the front toward you, the bottom tipped toward you. The toolbar over the face adds things:
-  **Text** (eV Sans, Regular or Bold, outline or hatched, several lines), **Logo** (the logo library, below),
+  **Text** (eV Sans, Regular or Bold, outline or hatched, several lines), **Library** (logos and symbols, below),
   **SVG…** (line art: its paths and shapes; convert text to paths first; its own size if the file says it in mm; the
   file is kept in the box) and **Hole ▾** (below). At its right end: **Outside | Inside** and **?**, the card with the
   keys and what the lines mean (the **?** key opens it too, on every view). The bar under the face shows only the
@@ -123,9 +123,19 @@ is the +0.00 plates turned 90°. With correct compensation they fit exactly like
   The items engrave on LINE on the side that faces out, and show on the 3D and the sheets. A face the box only has
   as a part that would need cutting mirrored (Console's and Console2's right sides, Console2's back wall) isn't
   offered.
-- **The logo library** (`.grill/logo-library.md`): **Logo** opens every logo in
-  `C:\Projects\eating voltage Fonts\logos`, through `serve.py` (private: they never ship with the app). Drag one onto
-  the face (it lands where you drop it, 20 mm high) or click it; **Change…** puts another in place of the selected one.
+- **The library** (`.grill/logo-library.md`, `.grill/symbol-library.md`): **Library** opens a search box, **Recent**
+  (the last 16 you placed, logos and symbols, kept in this browser), your logos, and once you type, the symbols the
+  words find (by name and tags: `usb`, `midi`, `screw`; the first 120). Enter places the first one, Esc closes. Drag
+  one onto the face (it lands where you drop it) or click it; **Change…** puts another logo or symbol in place of the
+  selected one, keeping its place and height.
+- **Symbols**: about 6,900 open-source line icons, [Lucide](https://lucide.dev) (ISC) and
+  [Tabler Icons](https://tabler.io/icons) (MIT, without its brand logos), for panel labels (USB, MIDI, power,
+  headphones) and contents labels (screws, cables, tools). A new one is 10 mm (its 24-unit grid) and engraves as
+  **Line** (one pass along each line's centre, LINE: fast, thinner than drawn) or **Solid** (the lines at their drawn
+  width: FILL up to 20 mm, outlines with a drawn hatch on LINE above). A box keeps the drawing it placed, so a newer
+  version of a set never changes a box you've cut.
+- **Logos**: every logo in `C:\Projects\eating voltage Fonts\logos`, through `serve.py` (private: they never ship with
+  the app), 20 mm high when placed.
   A logo is an `.svg` (its strokes) or a LightBurn `.lbrn2`, one logo per file, its first page as LightBurn draws it:
   Cut and Line layers engrave as outlines (never cut through), Scan layers stay filled, on FILL while the logo is
   20 mm high or less and as outlines with a drawn hatch on LINE above that (or **Outline only**). Text needs no font:
@@ -292,7 +302,8 @@ for the old and the new code alike (native Python unchanged), so check it in Chr
 ## For development
 
 ```
-npm install && npm run setup      # Pyodide + packages into public/pyodide (offline from then on)
+npm install && npm run setup      # Pyodide + packages into public/pyodide (offline from then on), symbols index
+npm run symbols                   # public/symbols.json from the pinned Lucide and Tabler packages (build does it too)
 npm run dev                       # http://localhost:5199, re-packs python/ on every .py save
 npm run build                     # dist/ - what start.bat serves
 .venv/Scripts/python -m unittest discover -s tests -v     # Python tests (python -m venv .venv;
@@ -334,6 +345,8 @@ sheet: IntegratedHingeBox's rectangle sits inside the round hinge hole. The ring
 superboxes © 2026 eatingVoltage. Free software under the GNU GPL, version 3 or later (see [LICENSE](LICENSE)),
 because boxes.py (© Florian Festi and contributors) is GPLv3. No warranty. Bundled: Pyodide (MPL-2.0), numpy,
 shapely (BSD), affine (BSD), qrcode (BSD, `python/_vendor/qrcode/LICENSE`), three.js (MIT), JSZip (MIT).
+The symbol library ships Lucide's icons (ISC, © Lucide Icons and Contributors) and Tabler Icons' outline icons
+(MIT, © Paweł Kuna), their license files beside the index in the build (`symbols/`).
 
 The interface and every engraved text are set in eV Sans, the eatingVoltage font (SIL Open Font License 1.1,
 `python/superboxes/stampcase/fonts/`, with its `OFL.txt` and `FONTLOG.txt`); the web build bundles the same files.

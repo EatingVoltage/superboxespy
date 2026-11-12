@@ -60,9 +60,12 @@ export interface LogoEntry {
  *  the face's, so it keeps its place when the box changes size (python/superboxes/faces.py). */
 export interface FaceItem {
   id: string;
-  kind: "text" | "logo" | "svg" | "hole";
+  kind: "text" | "logo" | "svg" | "symbol" | "hole";
   text?: string;               // lines split by \n
   logo?: string;               // a file in the logos folder (.svg or .lbrn2), linked by name
+  symbol?: string;             // a library symbol's id ("lucide:midi-port"), with its drawing as placed (src/symbols.ts):
+  path?: string;               // ... stroked, SVG path data on a 24-unit grid
+  path_fill?: string;          // ... filled
   svg?: string;                // an imported SVG's text: in the box file and for Python
   svg_ref?: string;            // ... in the page: that text in its store instead (src/svgs.ts)
   name?: string;               // the imported file's name
@@ -75,9 +78,10 @@ export interface FaceItem {
   part?: string;               // the library part a hole is for
   board?: boolean;             // an edge connector's opening: at the board's height on its wall, it moves sideways only
   lift?: number;               // its bottom from the board's top, mm (-0.5: air below)
-  size: number;                // cap height, or a logo's height, mm
+  size: number;                // cap height, a logo's height, or a symbol's grid, mm
   bold?: boolean;
-  style?: "outline" | "hatch"; // a .lbrn2 logo: "outline" for outlines only, else as drawn
+  style?: "outline" | "hatch" | "line" | "solid";   // a .lbrn2 logo: "outline" for outlines only, else as drawn;
+                                                    // a symbol: its centre lines, or its strokes filled
   rot: 0 | 90 | 180 | 270;
   anchor: string;              // tl t tr l c r bl b br
   dx: number;

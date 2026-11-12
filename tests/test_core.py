@@ -736,6 +736,82 @@ class LogoLibrary(unittest.TestCase):
         self.assertEqual(json.loads(api.call("logo_library", "{}"))["logos"][1]["logo"], "mark.lbrn2")
 
 
+class Symbols(unittest.TestCase):
+    """The symbol library's items (.grill/symbol-library.md): a line icon on a 24-unit grid, kept in the box with its
+    drawing; Line engraves its centre lines, Solid its strokes at their width by the logo's fill rule."""
+
+    MIDI = ("M12 18h.01M15 2.458V5a1 1 0 0 1 -1 1h-4a1 1 0 0 1 -1 -1V2.458M16 16h.01M18 12h.01M6 12h.01M8 16h.01"
+            "M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0z")                  # lucide:midi-port, as the index has it
+
+    def build(self, **over):
+        item = {"id": "S", "kind": "symbol", "symbol": "lucide:midi-port", "path": self.MIDI, "size": 10,
+                "style": "line", "anchor": "c", "dx": 0, "dy": 0}
+        item.update(over)
+        req = Faces.req(self, items=[item])
+        b = api.build(req)
+        top = b["faces"]["top"]
+        own = [d for d in b["parts"][top["part"]]["deco"] if d.get("item") == "S"]
+        return req, b, top["items"][0], own
+
+    def test_line_engraves_centre_lines_solid_fills_small_and_hatches_big(self):
+        _r, _b, it, own = self.build(style="line")
+        self.assertFalse(it["bad"])
+        self.assertEqual([d["layer"] for d in own], [M.LINE])
+        x0, y0, x1, y1 = it["bounds"]
+        self.assertAlmostEqual(x1 - x0, 10 * 20 / 24, delta=0.02)            # the port's circle: 20 of the 24 grid
+        for size, layers in ((10, [M.FILL]), (20, [M.FILL]), (20.5, [M.LINE])):
+            with self.subTest(size=size):
+                _r, _b, it, own = self.build(style="solid", size=size)
+                self.assertEqual([d["layer"] for d in own], layers)
+                x0, _y0, x1, _y1 = it["bounds"]
+                self.assertAlmostEqual(x1 - x0, size * 22 / 24, delta=0.02)  # the circle with its stroke's width
+        _r, _b, _it, own = self.build(style="solid", size=30)
+        self.assertGreater(len(own[0]["lines"]), 100)                      # outlines and the hatch
+
+    def test_a_dot_is_a_circle_the_strokes_width_across(self):
+        from superboxes import faces as F
+        p, lines, f = F._block({"kind": "symbol", "path": "M12 12h.01", "size": 24, "style": "line"})
+        self.assertEqual(len(lines.geoms), 1)
+        x0, y0, x1, y1 = lines.bounds
+        self.assertAlmostEqual(x1 - x0, 2.0, places=2)                     # 2 of the 24 grid at 24 mm
+        _p, _l, fill = F._block({"kind": "symbol", "path": "M12 12h.01", "size": 10, "style": "solid"})
+        self.assertAlmostEqual(fill.area, 3.14159 * (10 / 24) ** 2, delta=0.02)
+        _p, lines, _f = F._block({"kind": "symbol", "path": self.MIDI, "size": 24, "style": "line"})
+        self.assertEqual(len(lines.geoms), 7)                              # the circle, the key, five pins
+
+    def test_the_box_keeps_its_drawing(self):
+        """The item engraves the drawing it carries, whatever the index has under that id now."""
+        _r, _b, it, _own = self.build(path="M2 2h20v20h-20z", size=12)
+        x0, y0, x1, y1 = it["bounds"]
+        self.assertAlmostEqual(x1 - x0, 10.0, delta=0.02)                    # a 20-unit square at 12 mm a grid
+        self.assertAlmostEqual(y1 - y0, 10.0, delta=0.02)
+
+    def test_filled_and_stroked_is_outlined_once(self):
+        from superboxes import faces as F
+        dot = "M7 7.5a0.5 0.5 0 1 0 1 0a0.5 0.5 0 1 0 -1 0z"
+        _p, lines, _f = F._block({"kind": "symbol", "path": dot, "path_fill": dot, "size": 24, "style": "line"})
+        self.assertEqual(len(lines.geoms), 1)
+        _p, lines, _f = F._block({"kind": "symbol", "path": "", "path_fill": dot, "size": 24, "style": "line"})
+        self.assertEqual(len(lines.geoms), 1)                              # filled only: its outline
+
+    def test_a_drawing_that_cant_be_read_is_red(self):
+        for path, error in (("M1 1 L", "lucide:midi-port: its drawing can't be read"),
+                            ("", "lucide:midi-port has no drawing")):
+            with self.subTest(path=path):
+                req, b, it, _own = self.build(path=path)
+                self.assertEqual((it["bad"], it["error"]), (True, error))
+                req["layout"] = b["placements"]
+                self.assertIn("can't be read", api.export(req)["error"])
+
+    def test_solid_goes_to_lightburn_on_fill(self):
+        req, b, _it, _own = self.build(style="solid", size=8)
+        req["layout"] = b["placements"]
+        res = api.export(req)
+        self.assertTrue(res["ok"], res.get("error"))
+        lb = [f for f in res["files"] if f["kind"] == "lbrn2"][0]["content"]
+        self.assertIn('<Shape Type="Path" CutIndex="%d"' % M.FILL, lb)
+
+
 def _inside_rings(rings, x, y):
     """Even-odd: is (x, y) inside the region these rings outline?"""
     n = 0

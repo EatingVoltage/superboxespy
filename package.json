@@ -6,10 +6,11 @@
   "license": "GPL-3.0-or-later",
   "type": "module",
   "scripts": {
-    "setup": "node scripts/fetch-pyodide.mjs",
+    "setup": "node scripts/fetch-pyodide.mjs && node scripts/build-symbols.mjs",
+    "symbols": "node scripts/build-symbols.mjs",
     "pack": "python scripts/pack_python.py",
     "dev": "vite",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && node scripts/build-symbols.mjs && vite build",
     "test": ".venv\\Scripts\\python.exe -m unittest discover -s tests"
   },
   "dependencies": {
@@ -18,7 +19,9 @@
     "three": "0.186.1"
   },
   "devDependencies": {
+    "@tabler/icons": "3.51.0",
     "@types/three": "0.186.0",
+    "lucide-static": "1.72.0",
     "typescript": "7.0.2",
     "vite": "8.3.4"
   }
