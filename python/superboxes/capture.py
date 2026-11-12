@@ -21,7 +21,7 @@ from shapely.ops import linemerge, unary_union
 from boxes.drawing import Context, Surface
 
 from . import catalog
-from evlaser import machine as M
+from evlaser import machine as M, svgpath
 
 CUT, LINE, REF = M.CUT, M.LINE, M.REF
 EPS = 1e-4
@@ -126,24 +126,6 @@ def _poly_json(poly):
     return [{"outer": _ring_json(p.exterior), "holes": [_ring_json(r) for r in p.interiors]} for p in polys]
 
 
-def flatten(sub, steps=8):
-    """Subpath -> list of points (Beziers sampled with `steps` segments)."""
-    start, segs, _closed = sub
-    pts = [start]
-    cur = start
-    for c1, c2, e in segs:
-        if c1 is None:
-            pts.append(e)
-        else:
-            for k in range(1, steps + 1):
-                t = k / steps
-                mt = 1 - t
-                pts.append((mt ** 3 * cur[0] + 3 * mt * mt * t * c1[0] + 3 * mt * t * t * c2[0] + t ** 3 * e[0],
-                            mt ** 3 * cur[1] + 3 * mt * mt * t * c1[1] + 3 * mt * t * t * c2[1] + t ** 3 * e[1]))
-        cur = e
-    return pts
-
-
 def _subpaths(path):
     """boxes.py path commands -> subpaths. 'C' stores the end point first, then both control points."""
     subs, start, segs, cur = [], None, [], None
@@ -194,9 +176,9 @@ def _move(sub, dx, dy):
 
 def _rings(subs):
     """Closed rings of a part's cut contours. Some generators draw an outline as separate open edges (TrayLayout's
-    base plate), so open subpaths are joined end to end (on a 1 µm grid) into rings first."""
-    rings = [flatten(s, 6) for s in subs if s[2]]
-    opens = [flatten(s, 6) for s in subs if not s[2]]
+    base plate), so open subpaths are joined end to end (on a 1 Âµm grid) into rings first."""
+    rings = [svgpath.flatten(s, 6) for s in subs if s[2]]
+    opens = [svgpath.flatten(s, 6) for s in subs if not s[2]]
     if opens:
         snap = lambda pts: [(round(x, 3), round(y, 3)) for x, y in pts]
         merged = linemerge(MultiLineString([snap(o) for o in opens if len(o) > 1]))
@@ -566,7 +548,7 @@ def _pieces(raw, burn, walls=(), margin=0.0):
         drawn = subpaths[CUT] + subpaths[LINE]
         if not drawn:
             continue
-        pts = [pt for s in drawn for pt in flatten(s, 4)]
+        pts = [pt for s in drawn for pt in svgpath.flatten(s, 4)]
         x0 = min(x for x, _ in pts) - margin
         y0 = min(y for _, y in pts) - margin
         x1 = max(x for x, _ in pts) + margin

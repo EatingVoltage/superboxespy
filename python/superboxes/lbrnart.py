@@ -21,7 +21,7 @@ from functools import lru_cache
 import shapely
 from shapely.geometry import LineString, MultiLineString, MultiPolygon
 
-from evlaser import lbrn
+from evlaser import lbrn, svgpath
 
 from .svgart import area, mul as _mul
 
@@ -84,16 +84,6 @@ def _prims(text, n):
     return [(k, int(i), int(j)) for k, i, j in _PRIM.findall(t)]
 
 
-def _bez(p0, c1, c2, p1):
-    out = []
-    for k in range(1, STEPS + 1):
-        t = k / STEPS
-        mt = 1 - t
-        out.append((mt ** 3 * p0[0] + 3 * mt * mt * t * c1[0] + 3 * mt * t * t * c2[0] + t ** 3 * p1[0],
-                    mt ** 3 * p0[1] + 3 * mt * mt * t * c1[1] + 3 * mt * t * t * c2[1] + t ** 3 * p1[1]))
-    return out
-
-
 def _chain_end(pts, at, last):
     """A chain as [(points, closed)]: closed when it ends where it started; ending on a vertex it passed (a tail
     into a loop, as LightBurn draws some paths) the loop is closed and the tail before it open."""
@@ -117,7 +107,7 @@ def _path(verts, prims):
             cur, at = [verts[i][:2]], [(i, 0)]
         a, b = verts[i], verts[j]
         if kind == "B":
-            cur += _bez(a[:2], a[2] or a[:2], b[3] or b[:2], b[:2])
+            cur += svgpath.cubic(a[:2], a[2] or a[:2], b[3] or b[:2], b[:2], STEPS)
         else:
             cur.append(b[:2])
         at.append((j, len(cur) - 1))

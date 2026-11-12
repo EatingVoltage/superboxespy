@@ -189,6 +189,18 @@ def parse(d):
     return subpaths
 
 
+def cubic(p0, c1, c2, p1, steps=12):
+    """One cubic Bezier sampled uniformly: the `steps` points after p0, ending on p1."""
+    out = []
+    for k in range(1, steps + 1):
+        t = k / steps
+        mt = 1 - t
+        x = mt ** 3 * p0[0] + 3 * mt ** 2 * t * c1[0] + 3 * mt * t ** 2 * c2[0] + t ** 3 * p1[0]
+        y = mt ** 3 * p0[1] + 3 * mt ** 2 * t * c1[1] + 3 * mt * t ** 2 * c2[1] + t ** 3 * p1[1]
+        out.append((x, y))
+    return out
+
+
 def flatten(subpath, tol_steps=12):
     """Subpath -> list of points (polyline). Cubics are sampled uniformly."""
     p0, segs, _closed = subpath
@@ -198,12 +210,7 @@ def flatten(subpath, tol_steps=12):
         if c1 is None:
             pts.append(end)
         else:
-            for k in range(1, tol_steps + 1):
-                t = k / tol_steps
-                mt = 1 - t
-                x = mt ** 3 * cur[0] + 3 * mt ** 2 * t * c1[0] + 3 * mt * t ** 2 * c2[0] + t ** 3 * end[0]
-                y = mt ** 3 * cur[1] + 3 * mt ** 2 * t * c1[1] + 3 * mt * t ** 2 * c2[1] + t ** 3 * end[1]
-                pts.append((x, y))
+            pts += cubic(cur, c1, c2, end, tol_steps)
         cur = end
     return pts
 
